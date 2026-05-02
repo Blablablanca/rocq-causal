@@ -1,0 +1,3 @@
+[submodule "dsep-core"]
+	path = dsep-core
+	url = https://github.com/annazhang03/causal_models_formalization.git
