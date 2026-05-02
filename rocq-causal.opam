@@ -1,0 +1,11 @@
+opam-version: "2.0"
+name: "rocq-causal"
+version: "dev"
+synopsis: "Formally verified causal inference in Rocq"
+authors: ["Blanca Luo"]
+license: "MIT"
+homepage: "https://github.com/Blablablanca/rocq-causal"
+depends: [
+  "rocq-prover" {>= "9.0"}
+  "coq-infotheo"
+]
