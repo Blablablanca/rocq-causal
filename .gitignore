@@ -1,3 +1,4 @@
+# Rocq compiled files
 *.vo
 *.vok
 *.vos
@@ -6,6 +7,12 @@
 .coq-native/
 _build/
 
+# Generated Makefiles
 CoqMakefile
 CoqMakefile.conf
-.CoqMakefile.d
+CoqMakefile.d
+Makefile.conf
+.Makefile.d
+
+# Lia tactic cache
+.lia.cache

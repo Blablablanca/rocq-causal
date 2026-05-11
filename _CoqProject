@@ -1,2 +1,42 @@
--R . Causal
--R dsep-core DSep
+-Q dsep-core/DAGs DAGs
+-Q dsep-core/Utils Utils
+-Q dsep-core/CausalDiagrams CausalDiagrams
+-Q dsep-core/Semantics Semantics
+-Q . RocqCausal
+
+dsep-core/Utils/EqType.v
+dsep-core/Utils/Lists.v
+dsep-core/Utils/List_Basics.v
+dsep-core/Utils/Logic.v
+dsep-core/Utils/List_Relations.v
+dsep-core/Utils/Sublists.v
+dsep-core/DAGs/Basics_Constr.v
+dsep-core/DAGs/Basics_Proofs.v
+dsep-core/DAGs/Basics.v
+dsep-core/DAGs/PathFinding.v
+dsep-core/DAGs/CycleDetection.v
+dsep-core/DAGs/Descendants.v
+dsep-core/DAGs/Adjacency.v
+dsep-core/DAGs/TopologicalSort.v
+dsep-core/CausalDiagrams/Assignments.v
+dsep-core/CausalDiagrams/IntermediateNodes.v
+dsep-core/CausalDiagrams/CausalPaths.v
+dsep-core/CausalDiagrams/DSeparation.v
+dsep-core/CausalDiagrams/UnblockedAncestors.v
+dsep-core/CausalDiagrams/Interventions.v
+dsep-core/CausalDiagrams/Counterfactuals.v
+dsep-core/Semantics/FunctionRepresentation.v
+dsep-core/Semantics/FindValue.v
+dsep-core/Semantics/NodeCategorization.v
+dsep-core/Semantics/S1_Sources.v
+dsep-core/Semantics/S1_SourcesSeq.v
+dsep-core/Semantics/S2_Transmitters.v
+dsep-core/Semantics/S3_Colliders.v
+dsep-core/Semantics/S4_Descendants.v
+dsep-core/Semantics/ColliderDescendants.v
+dsep-core/Semantics/DescendantPathsDisjoint.v
+dsep-core/Semantics/SemanticSeparationDef.v
+dsep-core/Semantics/EquateValues.v
+dsep-core/Semantics/ChangeOrigUnbAnc.v
+dsep-core/Semantics/SemanticDSepEquiv.v
+ProbabilityExtension.v
