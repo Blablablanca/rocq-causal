@@ -2,7 +2,6 @@
 -Q dsep-core/Utils Utils
 -Q dsep-core/CausalDiagrams CausalDiagrams
 -Q dsep-core/Semantics Semantics
--Q . RocqCausal
 -Q ProbabilityExtension Prob
 -Q Experiment Experiment
 
@@ -43,3 +42,4 @@ dsep-core/Semantics/ChangeOrigUnbAnc.v
 dsep-core/Semantics/SemanticDSepEquiv.v
 Experiment/Exp_Basics.v
 Experiment/Do.v
+Experiment/ExperimentLang.v

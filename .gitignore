@@ -13,6 +13,9 @@ CoqMakefile.conf
 CoqMakefile.d
 Makefile.conf
 .Makefile.d
+Makefile.coq
+Makefile.coq.conf
+.Makefile.coq.d
 
 # Lia tactic cache
 .lia.cache

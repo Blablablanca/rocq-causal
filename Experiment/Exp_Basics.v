@@ -1,14 +1,12 @@
 From DAGs Require Import Basics.
 From DAGs Require Import CycleDetection.
-From Semantics Require Import FunctionRepresentation.
 Import ListNotations.
 
 
 Inductive node_label : Type :=
   | Treatment
   | Response
-  | Unmeasured
-  | SelectionIndicator (* to model sampling *)
+  | Unmeasurable
   | Unlabeled.
 (* the causal query in an experiment will be Treatment -> Response *)
 
@@ -16,8 +14,7 @@ Definition node_label_eqb (r1 r2 : node_label) : bool :=
   match r1, r2 with
   | Treatment,          Treatment          => true
   | Response,           Response           => true
-  | Unmeasured,         Unmeasured         => true
-  | SelectionIndicator, SelectionIndicator => true
+  | Unmeasurable,         Unmeasurable         => true (* nodes that can't be measured *)
   | Unlabeled,          Unlabeled          => true
   | _,                  _                  => false
   end.
@@ -50,11 +47,11 @@ Definition response_node (ag : aug_graph) : option node :=
   | _   => None
   end.
 
-Definition is_unmeasured (ag : aug_graph) (n : node) : bool :=
-  node_label_eqb (label_of ag n) Unmeasured.
+Definition is_unmeasurable (ag : aug_graph) (n : node) : bool :=
+  node_label_eqb (label_of ag n) Unmeasurable.
 
 Definition observed_nodes (ag : aug_graph) : nodes :=
-  filter (fun n => negb (is_unmeasured ag n)) (nodes_in_graph (dag ag)).
+  filter (fun n => negb (is_unmeasurable ag n)) (nodes_in_graph (dag ag)).
 
 Definition wf_aug_graph (ag : aug_graph) : Prop :=
   G_well_formed (dag ag) = true /\
@@ -88,3 +85,37 @@ Proof.
   - exists r. reflexivity.
   - simpl in Hlen. discriminate.
 Qed.
+
+Inductive operation (X : Type) : Type :=
+  | Intervene (n : node) (v : X)   (* do(n=v): set n to a specific value *)
+  | Randomize (n : node) (r : node)      (* RCT: remove incoming edges to n, add fresh r → n *)
+(*  | Control  (n : node) (v : X)  *)
+  | Measure   (n : node).            (* record n's current value into the log *)
+  (* | Wait. *)
+
+Arguments Intervene {X}.
+Arguments Randomize {X}.
+(* Arguments Stratify  {X}. *)
+Arguments Measure   {X}.
+(* Arguments Wait      {X}. *)
+
+(* temporary name until I found a better name *)
+Definition program (X : Type) : Type := list (operation X).
+
+Definition wf_operation {X : Type} (ag : aug_graph) (op : operation X) : Prop :=
+  match op with
+  | Intervene n _ =>
+      node_in_graph n (dag ag) = true
+  | Randomize n r =>
+      node_in_graph n (dag ag) = true /\
+      node_in_graph r (dag ag) = false
+  (* | Stratify n _ =>
+      node_in_graph n (dag ag) = true*)
+  | Measure n =>
+      node_in_graph n (dag ag) = true /\
+      label_of ag n <> Unmeasurable
+  (* | Wait => True *)
+  end.
+
+Definition wf_program {X : Type} (ag : aug_graph) (prog : program X) : Prop :=
+  Forall (wf_operation ag) prog.
