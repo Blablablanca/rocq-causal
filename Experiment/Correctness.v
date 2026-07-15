@@ -1,6 +1,6 @@
 From DAGs Require Import Basics Descendants CycleDetection TopologicalSort PathFinding.
-From Stdlib Require Import Lia.
-From CausalDiagrams Require Import Assignments Interventions.
+From Stdlib Require Import Lia Bool.
+From CausalDiagrams Require Import Assignments Interventions DSeparation.
 From Semantics Require Import FunctionRepresentation FindValue EquateValues.
 From Utils Require Import Lists Logic.
 From Experiment Require Import Main.
@@ -591,3 +591,244 @@ Proof. reflexivity. Qed.
 Example rct_G_3_stratum_1_value :
   semantic_do 1 1 (dag G_3) g_3 2 [(1, 0); (2, 0); (3, 1)] = Some 2.
 Proof. reflexivity. Qed.
+
+(* =====================================================================
+   Syntactic correctness of a simplified RCT
+
+   A [simple_rct] over T (treatment) and R (response) is SYNTACTICALLY CORRECT
+   when its post-experiment DAG satisfies the backdoor criterion over T and R.
+   Randomizing T severs every backdoor path, so the empty set Z = [] is already
+   admissible: [syntactic_backdoor <post-dag> T R []] holds.
+   ===================================================================== *)
+
+(* ---- Edge structure of the T-outgoing-mutilated post-RCT graph ---- *)
+(* The randomized, then [remove_outgoing T]-mutilated graph on which the
+   backdoor check runs is [(rand :: V, EH)] with
+     EH = remove_edges_out_of T ((rand, T) :: remove_edges_into T E).
+   Its only edge touching T is [rand -> T], and [rand]'s only edge is [rand -> T]:
+   T is joined to the rest of the graph solely through the fresh source. *)
+
+Lemma is_edge_In_edges : forall (e : edge) (V : nodes) (E : edges),
+  is_edge e (V, E) = true -> In e E.
+Proof.
+  intros [u w] V E H. simpl in H.
+  apply andb_prop in H. destruct H as [_ Hme].
+  apply member_edge_In_equiv. exact Hme.
+Qed.
+
+Lemma not_In_is_edge_false : forall (e : edge) (V : nodes) (E : edges),
+  ~ In e E -> is_edge e (V, E) = false.
+Proof.
+  intros [u w] V E Hni. simpl.
+  apply member_edge_In_equiv_false in Hni. rewrite Hni. apply andb_false_r.
+Qed.
+
+(* Every edge of EH is either the fresh [rand -> T] edge, or an original edge of
+   G that neither leaves nor enters T. *)
+Lemma In_edge_remove_out_randomize : forall (T rand : node) (E : edges) (e : edge),
+  In e (remove_edges_out_of T ((rand, T) :: remove_edges_into T E)) ->
+  e = (rand, T) \/ (In e E /\ fst e <> T /\ snd e <> T).
+Proof.
+  intros T rand E e Hin.
+  unfold remove_edges_out_of in Hin.
+  apply filter_In in Hin. destruct Hin as [Hin HfT].
+  apply negb_true_iff in HfT. apply Nat.eqb_neq in HfT.
+  destruct Hin as [He | He].
+  - left. symmetry. exact He.
+  - right. unfold remove_edges_into in He.
+    apply filter_In in He. destruct He as [HeE HsT].
+    apply negb_true_iff in HsT. apply Nat.eqb_neq in HsT.
+    repeat split; assumption.
+Qed.
+
+Lemma no_edge_from_fresh : forall (V : nodes) (E : edges) (a b : node),
+  G_well_formed (V, E) = true -> member a V = false -> In (a, b) E -> False.
+Proof.
+  intros V E a b Hwf Ha Hin.
+  destruct (wf_edge_endpoints V E a b Hwf Hin) as [Hma _].
+  rewrite Hma in Ha. discriminate.
+Qed.
+
+Lemma no_edge_to_fresh : forall (V : nodes) (E : edges) (a b : node),
+  G_well_formed (V, E) = true -> member b V = false -> In (a, b) E -> False.
+Proof.
+  intros V E a b Hwf Hb Hin.
+  destruct (wf_edge_endpoints V E a b Hwf Hin) as [_ Hmb].
+  rewrite Hmb in Hb. discriminate.
+Qed.
+
+(* The four adjacency facts about the mutilated graph [(rand :: V, EH)]. *)
+
+Lemma rct_no_edge_from_T : forall (T rand : node) (V : nodes) (E : edges) (w : node),
+  rand <> T ->
+  is_edge (T, w)
+    (rand :: V, remove_edges_out_of T ((rand, T) :: remove_edges_into T E)) = false.
+Proof.
+  intros T rand V E w HrandT.
+  apply not_In_is_edge_false. intro Hin.
+  apply In_edge_remove_out_randomize in Hin.
+  destruct Hin as [Heq | [_ [Hfst _]]].
+  - inversion Heq. congruence.
+  - simpl in Hfst. congruence.
+Qed.
+
+Lemma rct_edge_into_T : forall (T rand : node) (V : nodes) (E : edges) (a : node),
+  is_edge (a, T)
+    (rand :: V, remove_edges_out_of T ((rand, T) :: remove_edges_into T E)) = true ->
+  a = rand.
+Proof.
+  intros T rand V E a Hie.
+  apply is_edge_In_edges in Hie.
+  apply In_edge_remove_out_randomize in Hie.
+  destruct Hie as [Heq | [_ [_ Hsnd]]].
+  - inversion Heq. congruence.
+  - simpl in Hsnd. congruence.
+Qed.
+
+Lemma rct_edge_from_rand : forall (T rand : node) (V : nodes) (E : edges) (w : node),
+  G_well_formed (V, E) = true -> member rand V = false ->
+  is_edge (rand, w)
+    (rand :: V, remove_edges_out_of T ((rand, T) :: remove_edges_into T E)) = true ->
+  w = T.
+Proof.
+  intros T rand V E w Hwf Hrand Hie.
+  apply is_edge_In_edges in Hie.
+  apply In_edge_remove_out_randomize in Hie.
+  destruct Hie as [Heq | [HinE [_ _]]].
+  - inversion Heq. congruence.
+  - exfalso. eapply no_edge_from_fresh; eauto.
+Qed.
+
+Lemma rct_no_edge_into_rand : forall (T rand : node) (V : nodes) (E : edges) (w : node),
+  G_well_formed (V, E) = true -> member rand V = false -> rand <> T ->
+  is_edge (w, rand)
+    (rand :: V, remove_edges_out_of T ((rand, T) :: remove_edges_into T E)) = false.
+Proof.
+  intros T rand V E w Hwf Hrand HrandT.
+  apply not_In_is_edge_false. intro Hin.
+  apply In_edge_remove_out_randomize in Hin.
+  destruct Hin as [Heq | [HinE [_ _]]].
+  - inversion Heq. congruence.
+  - eapply no_edge_to_fresh; eauto.
+Qed.
+
+(* No (undirected, acyclic) path joins T and R in the mutilated graph: any such
+   path must leave T via [rand -> T], but then can only return to T, never
+   reaching R. *)
+Lemma rct_no_TR_path : forall (T R rand : node) (V : nodes) (E : edges) (l : nodes),
+  G_well_formed (V, E) = true ->
+  member rand V = false ->
+  rand <> T -> T <> R -> R <> rand ->
+  is_path_in_graph (T, R, l)
+    (rand :: V, remove_edges_out_of T ((rand, T) :: remove_edges_into T E)) = true ->
+  acyclic_path_2 (T, R, l) -> False.
+Proof.
+  intros T R rand V E l Hwf Hrand HrandT HTR HRrand Hpath Hacyc.
+  unfold is_path_in_graph in Hpath.
+  destruct l as [| a l'].
+  - (* l = [] : path list [T; R] *)
+    cbn [app is_path_in_graph_helper] in Hpath.
+    rewrite andb_true_r in Hpath.
+    rewrite (rct_no_edge_from_T T rand V E R HrandT) in Hpath.
+    cbn [orb] in Hpath.
+    apply rct_edge_into_T in Hpath. congruence.
+  - destruct l' as [| b l''].
+    + (* l = [a] : path list [T; a; R] *)
+      cbn [app is_path_in_graph_helper] in Hpath.
+      rewrite andb_true_r in Hpath.
+      apply andb_prop in Hpath. destruct Hpath as [H1 H2].
+      rewrite (rct_no_edge_from_T T rand V E a HrandT) in H1.
+      cbn [orb] in H1. apply rct_edge_into_T in H1. subst a.
+      rewrite (rct_no_edge_into_rand T rand V E R Hwf Hrand HrandT) in H2.
+      rewrite orb_false_r in H2.
+      apply (rct_edge_from_rand T rand V E R Hwf Hrand) in H2. congruence.
+    + (* l = a :: b :: l'' : first two edges are T ~ a and a ~ b *)
+      cbn [app is_path_in_graph_helper] in Hpath.
+      apply andb_prop in Hpath. destruct Hpath as [H1 Hrest].
+      rewrite (rct_no_edge_from_T T rand V E a HrandT) in H1.
+      cbn [orb] in H1. apply rct_edge_into_T in H1. subst a.
+      apply andb_prop in Hrest. destruct Hrest as [H2 _].
+      rewrite (rct_no_edge_into_rand T rand V E b Hwf Hrand HrandT) in H2.
+      rewrite orb_false_r in H2.
+      apply (rct_edge_from_rand T rand V E b Hwf Hrand) in H2. subst b.
+      (* l = rand :: T :: l'', so T occurs in l, contradicting acyclicity *)
+      destruct Hacyc as [_ [HnT _]]. apply HnT. right. left. reflexivity.
+Qed.
+
+(* If no acyclic undirected path joins u and v, they are d-separated given any Z:
+   [d_separated_bool] quantifies over exactly those paths. *)
+Lemma dsep_bool_of_no_acyclic_path : forall (u v : node) (G : graph) (Z : nodes),
+  G_well_formed G = true ->
+  no_one_cycles (snd G) = true ->
+  (forall l, is_path_in_graph (u, v, l) G = true -> acyclic_path_2 (u, v, l) -> False) ->
+  d_separated_bool u v G Z = true.
+Proof.
+  intros u v G Z Hwf Hloop Hno.
+  unfold d_separated_bool. apply forallb_forall. intros p Hp.
+  destruct p as [[u' v'] l].
+  assert (Hv : v' = v).
+  { destruct G as [V E]. unfold find_all_paths_from_start_to_end in Hp.
+    apply filter_In in Hp. destruct Hp as [_ Hend].
+    apply Nat.eqb_eq in Hend. simpl in Hend. congruence. }
+  assert (Hu : u' = u).
+  { destruct G as [V E]. unfold find_all_paths_from_start_to_end in Hp.
+    apply filter_In in Hp. destruct Hp as [Hp _].
+    assert (Hbase : forall q, In q (edges_as_paths_from_start u E) -> path_start q = u).
+    { intros [[qa qb] qc] Hq.
+      pose proof (edges_as_paths_from_start_helper u qa qb qc E Hq) as HH.
+      simpl. exact HH. }
+    pose proof (extend_paths_from_start_iter_start u
+                  (edges_as_paths_from_start u E) E (length V) Hbase (u', v', l) Hp) as Hs.
+    simpl in Hs. congruence. }
+  subst u' v'.
+  exfalso. apply (Hno l).
+  - apply paths_start_to_end_valid; assumption.
+  - apply (paths_start_to_end_acyclic u v l G); assumption.
+Qed.
+
+(* MAIN THEOREM.  A simplified RCT is syntactically correct: its post-experiment
+   DAG satisfies the backdoor criterion over the treatment T and response R with
+   the empty adjustment set.  T and R are the treatment / response nodes of G,
+   and [rand] is any node not already present in G. *)
+Theorem simple_rct_syntactically_correct :
+  forall (G : aug_graph) (F : @graphfun nat) (S : list individual) (T R rand : node),
+    wf_aug_graph G ->
+    In T (treatment_nodes G) ->             (* T is the treatment node *)
+    In R (response_nodes G) ->              (* R is the response node *)
+    node_in_graph rand (dag G) = false ->   (* rand is a fresh randomizer *)
+    syntactic_backdoor (post_experiment_dag (simple_rct G F S T R rand)) T R [] = true.
+Proof.
+  intros G F S T R rand Hwf HT HR Hrandfresh.
+  (* extract graph-membership and labels of T and R *)
+  apply In_nodes_with_label_inv in HT. destruct HT as [HTin HTlab].
+  apply In_nodes_with_label_inv in HR. destruct HR as [HRin HRlab].
+  destruct Hwf as [HGwf [HGcyc _]].
+  (* reduce the post-experiment DAG and expose (V, E) *)
+  rewrite post_dag_simple_rct.
+  destruct (dag G) as [V E] eqn:Hdag.
+  simpl in HTin, HRin, Hrandfresh.
+  (* the syntactic backdoor check with Z = [] reduces to a single d-separation *)
+  unfold syntactic_backdoor.
+  cbn [dedup nodup no_descendant_of_b forallb andb].
+  (* derive the disequalities the RCT graph needs *)
+  assert (HrandT : rand <> T).
+  { intro Heq. rewrite Heq, HTin in Hrandfresh. discriminate. }
+  assert (HTR : T <> R).
+  { intro Heq. rewrite Heq, HRlab in HTlab. discriminate. }
+  assert (HRrand : R <> rand).
+  { intro Heq. rewrite Heq, Hrandfresh in HRin. discriminate. }
+  apply dsep_bool_of_no_acyclic_path.
+  - (* well-formedness of the mutilated post-RCT graph *)
+    apply G_well_formed_remove_outgoing.
+    apply G_well_formed_randomize; assumption.
+  - (* no self loops (from acyclicity) *)
+    apply contains_cycle_no_self_loop.
+    + apply G_well_formed_remove_outgoing.
+      apply G_well_formed_randomize; assumption.
+    + apply contains_cycle_remove_outgoing.
+      * apply G_well_formed_randomize; assumption.
+      * apply contains_cycle_randomize; assumption.
+  - (* no undirected path joins T and R after randomizing T *)
+    intros l Hpath Hacyc.
+    apply (rct_no_TR_path T R rand V E l); assumption.
+Qed.

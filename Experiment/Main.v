@@ -188,9 +188,6 @@ Definition no_descendant_of_b (T : node) (G : graph) (Z : nodes) : bool :=
   forallb (fun z => negb (member z (find_descendants T G))) Z.
 
 (* ---- Edge removal (remove_outgoing) preserves well-formedness/acyclicity ---- *)
-(* The [remove_outgoing] analogues of [G_well_formed_do]/[contains_cycle_do],
-   proved generically over an edge-filter, so [backdoor_correspondence] can take
-   its wf/acyclicity hypotheses on the ORIGINAL graph G. *)
 
 Lemma remove_outgoing_pair : forall (T : node) (V : nodes) (E : edges),
   remove_outgoing T (V, E) = (V, filter (fun edg => negb (fst edg =? T)) E).
@@ -738,4 +735,41 @@ Proof.
   - intros [Hnd Hsem].
     apply andb_true_intro.
     split; [ exact Hnd | apply (proj1 Hequiv); exact Hsem ].
+Qed.
+
+(* ===================================================================== *)
+(* Simplified randomized controlled trial (RCT)                          *)
+(* ===================================================================== *)
+
+(* A [simple_rct] is an experiment over ANY causal DAG [G], graphfun [F] and
+   sample [S] whose program randomizes the treatment node [T] against a fresh
+   randomizer [rand] and then measures the response node [R].  For now we take a
+   single treatment and a single response node.  The correctness statement is in
+   [Correctness.v] ([simple_rct_syntactically_correct]). *)
+Definition simple_rct (G : aug_graph) (F : @graphfun nat) (S : list individual)
+    (T R rand : node) : experiment :=
+  mk_experiment G F S [Randomize T rand; Measure R].
+
+(* The post-experiment DAG of a [simple_rct]: randomizing [T] deletes [T]'s
+   incoming edges and adds the fresh source [rand -> T]; measuring is inert on
+   the structural layer. *)
+Lemma post_dag_simple_rct : forall (G : aug_graph) (F : @graphfun nat)
+    (S : list individual) (T R rand : node),
+  post_experiment_dag (simple_rct G F S T R rand)
+  = add_fresh_source rand T (remove_incoming T (dag G)).
+Proof. reflexivity. Qed.
+
+(* Membership in [nodes_with_label] recovers both graph-membership and the
+   label of the node -- lets a caller say "T is the treatment node" with one
+   hypothesis. *)
+Lemma In_nodes_with_label_inv : forall (ag : aug_graph) (r : node_label) (n : node),
+  In n (nodes_with_label ag r) ->
+  node_in_graph n (dag ag) = true /\ label_of ag n = r.
+Proof.
+  intros ag r n Hin. unfold nodes_with_label in Hin.
+  apply filter_In in Hin. destruct Hin as [Hin Hlab].
+  split.
+  - destruct (dag ag) as [V E]. unfold nodes_in_graph in Hin.
+    unfold node_in_graph. apply member_In_equiv. exact Hin.
+  - apply node_label_eqb_eq. exact Hlab.
 Qed.

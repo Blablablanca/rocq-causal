@@ -200,6 +200,83 @@ during execution (the "known gap" above).
 
 - Build a self-contained finite probability library rather than importing infotheo, but be aware of the risk: needs tend to grow, and it may become worth switching to an existing library later. Design the probability layer with a narrow interface so migration to infotheo remains feasible if needed.
 
+## Static analysis techniques for identifiability
+
+Each design-correctness criterion is a **graphical (syntactic) check** on the
+post-experiment DAG that certifies `P(R | do(T))` is identifiable, paired with a
+**value-level (semantic) counterpart** and a soundness/completeness theorem
+between them — i.e. an instance of **Theorem B**. Curated here: the backdoor pair
+is done; the rest are pinned TODOs. Each new one is a `syntactic_*` bool check, a
+`semantic_*` Prop, and a `*_correspondence` theorem.
+
+### Done: backdoor criterion (`Experiment/Main.v`)
+
+```coq
+Definition syntactic_backdoor (G : graph) (T R : node) (Z : nodes) : bool :=
+  no_descendant_of_b T G (cond_set T R Z)
+  && d_separated_bool T R (remove_outgoing T G) (cond_set T R Z).
+
+Definition semantic_backdoor (X : Type) `{EqType X}
+    (G : graph) (T R : node) (Z : nodes) : Prop :=
+  no_descendant_of_b T G (cond_set T R Z) = true /\
+  semantically_separated X (remove_outgoing T G) T R (cond_set T R Z).
+
+Theorem backdoor_correspondence : ...
+  syntactic_backdoor G T R Z = true <-> semantic_backdoor X G T R Z.
+```
+
+- **Adjustment set** `cond_set T R Z` = `Z` deduplicated and stripped of `T`, `R`
+  (never valid covariates) — so `each_node_appears_once` and `T,R ∉ Z` hold by
+  construction and are *not* theorem hypotheses.
+- **Syntactic side**: `Z` contains no descendant of `T`, and `T` is d-separated
+  from `R` given `Z` in `remove_outgoing T G` — the graph with `T`'s *outgoing*
+  edges deleted, so only into-`T` (backdoor) paths survive. A decidable check.
+- **Semantic side**: same admissibility guard, but blocking is
+  `semantically_separated` — perturbing `T` never changes `R` given `Z`, for
+  *every* mechanism (∀ graphfun).
+- **Proof (brief)**: the shared no-descendant guard splits off via `andb`; the
+  remaining `d_separated_bool ⟺ semantically_separated` is dsep-core's
+  `semantic_and_d_separation_equivalent` on the outgoing-mutilated graph.
+  Remaining hypotheses: `R ∈ G`, `T ≠ R`, `G` well-formed/acyclic (transferred
+  through edge removal by `G_well_formed_/contains_cycle_remove_outgoing`).
+- **RCT** is the `Z = ∅` special case (randomizing `T` severs all backdoor paths).
+
+### TODO: frontdoor criterion
+
+Unobserved confounding of `T → R`, but a fully-mediating *observed* mediator `M`
+(`T → M → R`, no direct `T → R`, confounder doesn't touch `M`). Estimand = two
+chained adjustments; conditions on the mediator. `syntactic_frontdoor` /
+`semantic_frontdoor` + correspondence.
+
+### TODO: do-calculus (three rules)
+
+The general engine — insertion/deletion of observations, action/observation
+exchange, insertion/deletion of actions — each a d-separation condition in a
+mutilated graph. Backdoor is essentially rule 2. A verified do-calculus rewrite
+system would subsume backdoor and frontdoor.
+
+### TODO: ID algorithm
+
+Tian–Pearl / Shpitser–Pearl: sound **and complete** for nonparametric
+identifiability of `P(R | do(T))` from the observed distribution with latents.
+The general endpoint (backdoor/frontdoor are special cases), and the natural
+place to *output the estimand*, not just a yes/no.
+
+### TODO: instrumental variables (different shape)
+
+Instrument `Z → T`, independent of confounders, affecting `R` only through `T`.
+**Not** nonparametrically point-identified (the ID algorithm returns "not
+identifiable"): gives bounds (Balke–Pearl) or a LATE under monotonicity. So
+"correct" widens to *identifiable-under-extra-assumptions or bounded*. Also the
+case that breaks the fixed-`G0` evaluation shortcut (see Semantics).
+
+### TODO: testable implications (model validation, not identifiability)
+
+The conditional independences a DAG *entails* (its d-separations) are exactly the
+constraints to check against real data to *falsify* the model. Reuses
+`semantically_separated` / `d_separated_bool` directly — the "input your CI
+assumptions and see whether the model implies them" use case.
+
 ## Todo outside of this codebase
 
 - Curate a list of historical experiments and check whether the framework can express them. Start by collecting candidate experiments this week.
