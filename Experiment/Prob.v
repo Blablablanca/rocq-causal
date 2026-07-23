@@ -1,6 +1,6 @@
 From DAGs Require Import Basics_Constr.
 From CausalDiagrams Require Import Assignments.
-From Experiment Require Import Experiment.
+From Experiment Require Import Main.
 From Stdlib Require Import Reals.
 
 Import ListNotations.

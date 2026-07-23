@@ -1,17 +1,126 @@
 # Experiments as Programs — Project Plan
 
-Formal framework (in Rocq) for expressing scientific experiments as programs over causal DAGs, so experimental designs can be checked for correctness with program-analysis techniques (e.g., d-separation).
+Formal framework (in Rocq) for expressing scientific experiments as programs over causal models, so experimental designs can be checked for correctness with program-analysis techniques (e.g., d-separation).
 
 ## Motivation
 
-Historically, experiments are error prone: unidentified non-causal influence paths, bad proxies, unexecutable designs. If we treat an experiment as a program transforming a causal DAG, we can statically verify the design.
+Historically, experiments are error prone: unidentified non-causal influence paths, bad proxies, unexecutable designs. If we treat an experiment as a program transforming a causal model, we can statically verify the design.
 
 A **correct design** means:
 
 1. **Validity** — the experiment successfully measures the effect of the treatment(s) on the response(s).
 *Graphically:* the post-experiment graph d-separates T and R from all non-causal influence, and T and R remain reachable via the intended causal path.
-*Algebraically:* P(R|do(T))
+*Algebraically:* the outcome law identifies P(R|do(T))
 2. **Executability** — all controlled/intervened nodes are not labeled unmeasurable.
+
+## Architecture: two probabilistic programs (reframe, 2026-07-23)
+
+Supervisor's reframe, adopted: the causal model and the experiment are **both
+probabilistic programs**, and the experiment is a **transformer from the
+distribution of the experimental units' innate characteristics to the outcome
+distribution**. Concretely:
+
+### 1. The causal model is one object: `⟨G, F⟩`
+
+The DAG is the *syntax* (who may depend on whom — the variable-dependency
+structure of the program text); the graphfun is the *semantics* (how — the
+assignment bodies). Neither is a separate artifact:
+
+```coq
+Record model := {
+  structure : aug_graph;        (* dag + labels : the syntax *)
+  mech      : @graphfun nat;    (* node bodies  : the semantics *)
+}.
+
+Definition wf_model (M : model) : Prop :=
+  wf_aug_graph (structure M) /\
+  dag_fun_compatible (dag (structure M)) (mech M).
+```
+
+`dag_fun_compatible` (already in `Main.v`) is the glue invariant — F reads only
+the parents G declares. It is exactly the "syntax and semantics agree"
+condition, and it is preserved by every operation (a proof obligation per op).
+
+**Denotation** — the model is a probabilistic program with free exogenous
+variables, i.e. a *kernel*:
+
+```
+⟦M⟧ : dist U  →  dist (assignments nat)
+```
+
+defined as the pushforward of the innate law along `find_value` (Pearl's SCM
+form: all randomness up front, then a deterministic solve). This reuses
+dsep-core's evaluator wholesale and needs no enumeration of worlds. The
+pushforward form covers straight-line programs, `If`, and bounded loops; only
+unbounded recursion would force a fully monadic evaluator, so definitions stay
+monadic to keep that door open.
+
+### 2. The experiment is a separate probabilistic program
+
+```
+⟦e⟧_M : dist U  →  dist log
+```
+
+- **Input** = the population law over innate characteristics (exogenous U).
+  The old `sample : list individual` field is *deleted from the record*: a
+  concrete cohort is just the empirical distribution `uniform {u₁ … uₙ}`
+  supplied as input. Sample-dependence disappears from the semantics; finite-
+  sample estimation returns later as a statistics layer on top (i.i.d. draws
+  from `⟦e⟧(P_U)`).
+- **The experiment brings its own coins.** Randomizer draws are the
+  experiment's randomness, bound inline by the run semantics — they are *never*
+  written into U. This resolves the previously flagged open decision ("where do
+  per-unit randomizer draws live") and closes the known gap (the draw no longer
+  needs to be pre-injected into the individual).
+- **AST**: start with `operations = list operation` (the straight-line
+  fragment), later generalize to `Seq`/`If` (+ bounded loops). `If` on measured
+  data is what expresses adaptive designs and dynamic treatment regimes
+  (Robins' g-formula) — a static list cannot, because the operation's argument
+  depends on runtime data.
+
+### 3. The structural layer is a *derived projection*, not a parallel definition
+
+`α M = structure M`. The abstract transform is the structural component of the
+one model transform, and the soundness statement `α (step op M) = abs_step op
+(α M)` is now provable — under the agreement refactor (below) it holds
+definitionally for the current three ops. Static checks (backdoor etc.) read
+only `α M`, stay X-free and decidable, and quantify over mechanisms as
+`∀ M, structure M = G → …`.
+
+When `If` arrives there is no single post-experiment DAG (the model you end up
+with depends on measured data), so the abstract layer becomes a *sound
+over-approximation* (join of branch graphs). That is where abstract
+interpretation properly re-enters — as an approximation of the distribution
+transformer, which stays the well-defined object.
+
+### Design lesson, revised
+
+The previous plan argued "G and F need not structurally agree" and kept the two
+sides as independently-defined transforms related only through a (then-unbuilt)
+denotation. That disagreement was an **artifact of the old encoding**, not a
+fact about causal models: with no place to put a fresh randomizer's law, the
+graph side grew a node `r → n` that the mechanism side never read. Under the
+agreement refactor both sides of every op say the same thing, and the DAG-level
+reasoning that motivated the split survives intact as the projection `α`.
+
+## Decision log
+
+Decisions taken 2026-07-23 (each was a consulted designer's choice):
+
+| # | decision | rejected alternatives | rationale |
+|---|---|---|---|
+| D1 | `Randomize n` = `remove_incoming n` structurally; **no fresh randomizer node**; `r` dropped from the AST | (a) graph literally unchanged — breaks the backdoor check and `simple_rct_syntactically_correct`; (b) fresh node on *both* sides — agreement also holds but the node set grows mid-run, complicating the distribution layer | randomization *is* an intervention whose value is drawn; the coin belongs to the experiment, not the model. Reintroduce an explicit `r → T` node only when modeling **non-compliance / IV** (assignment ≠ treatment received) |
+| D2 | P_U is an **input** (kernel view), not a model field | `model = {G; F; exo}` denoting a closed distribution | matches the transformer definition verbatim; keeps innate vs. experimental randomness cleanly separated; works because (per D1) the node set never changes |
+| D3 | `Randomize` mechanism = **draw v, then intervene** (`bind uniform (fun v => f_n := const v)`) | shadowing encoding (`f_n := f_unobs` + inject `(n,v)` into U) | U stays purely innate; structural rule literally shared with `Intervene`; operationally faithful (coin decides, patient receives). `randomize_semantic_do` survives as the proved bridge between the two encodings |
+| D4 | `dist A = list (A * Q)` with observational equality (`d₁ ≈ d₂ := ∀ E, Pr[E] equal`) | weighted list over R (nothing computes); unweighted multiset (uniform-only) | computable — examples check by `vm_compute`; decidable equality; narrow interface keeps migration to R/infotheo open |
+
+Still open (bring to supervisor):
+- `Measure` when `find_value` returns `None`: prove totality under `wf` and drop
+  the `option` (preferred — avoids stacking `dist` on `option`), or carry
+  option values in the log.
+- Whether `dist` should be a quotient (canonical normalized form) or a setoid
+  under `≈`. Setoid is the default; revisit if rewriting friction grows.
+- Timing of `Stratify` / `Timestep` / bounded loops.
 
 ## Core Definitions
 
@@ -26,286 +135,165 @@ Inductive node_label : Type :=
 ```
 
 - `Unmeasurable` nodes cannot be measured and thus cannot be conditioned on.
-- Treatment and response should generalize to **sets/vectors of nodes**: the objective is P(R | do(T)) where T and R are vectors, i.e., measure (T₁ ∧ … ∧ Tₙ) → (R₁ ∧ … ∧ Rₖ). Do not hard-code |T| = |R| = 1.
-- Sequential / time-varying treatments: handled by sequential `Intervene` operations; relevant theory is Robins' g-formula.
+- Treatment and response should generalize to **sets/vectors of nodes**: the objective is P(R | do(T)) where T and R are vectors. Do not hard-code |T| = |R| = 1.
+- Sequential / time-varying treatments: sequential `Intervene`/`Randomize`; adaptive versions need `If` (Robins' g-formula).
 - The response may not be directly measurable in reality; the user decides whether to use a proxy as the response node or model response as a function of other nodes.
-- Simplifying assumptions: no measurement error, no execution error.
-- Also see "Universal Assumptions" in `Exp_Basics.v`
-- Edge labels (time-step edges, correlation edges) are deferred. Time steps can be modeled as causal edges; correlation edges would complicate the construction.
-
-### Experiment
-
-```coq
-Record experiment (X : Type) : Type := mk_experiment {
-  init_graph : aug_graph;
-  init_fun   : @graphfun X;
-  sample     : list (individual X);  (* individual = complete instantiation of the unobservables *)
-  ops        : program X;
-}.
-```
-
-- `sample` is finite and concrete for now; the resulting distribution is therefore sample-dependent. To compare experiments, consider asymptotic behavior (**future work**).
+- Simplifying assumptions: no measurement error, no execution error. Also see "Universal Assumptions" in `Experiment/Main.v`.
+- Edge labels (time-step edges, correlation edges) are deferred.
 
 ### Operations
 
 ```coq
-Inductive operation (X : Type) : Type :=
-  | Intervene (n : node) (v : X)      (* do(n=v): set n to a specific value *)
-  | Randomize (n : node) (r : node)   (* RCT: remove incoming edges to n, add fresh r → n *)
-  | Measure   (n : node).             (* record n's current value into the log *)
+Inductive operation : Type :=
+  | Intervene (n : node) (v : nat)   (* do(n=v): set n to a specific value *)
+  | Randomize (n : node)             (* n's value is drawn by the experimenter's coin *)
+  | Measure   (n : node).            (* record n's current value into the log *)
 ```
 
-- This minimal set {intervene, randomize, measure} is a deliberately simple, well-defined starting point. Even though there are countless ways to "measure" in practice, one abstract `Measure` is useful at this level of abstraction.
-- `Control` is intentionally excluded for now — it lacks a clear characterization. Revisit later.
-- Planned future operations: `Control`, `Stratify`, `Timestep`.
+- Minimal set {intervene, randomize, measure}; one abstract `Measure` is deliberate.
+- `Randomize` carries **no fresh randomizer node** (D1).
+- `Control` still excluded (lacks a clear characterization). Planned: `Control`, `Stratify`, `Timestep`, then `Seq`/`If`.
 
-## Semantics
+### Transformation rules (one transform, two projections)
 
-The DSL has **three layers**, related by an abstraction. The design lesson from
-building this out: the DAG is the *abstraction* of the mechanism — it keeps *who
-depends on whom* (the arrows), forgets *how* (the functions) and forgets the
-data — and static verification lives on that abstraction. Do **not** fuse the two
-into one `⟨G,F⟩` object at the level of state/transforms: fusing throws away the
-cheap, universal, decidable reasoning that motivates using a DAG at all.
-
-| layer | object | role |
-|---|---|---|
-| **structural** | DAG `G` + labels + `measured` | abstract interpretation; d-separation for verification |
-| **mechanism** | graphfun `F` (+ `dom`) | operational run → log; carries the values |
-| **denotation** | `⟦⟨G, F⟩, P_U⟧ = P` | the interventional distribution `P(R \| do(T))` |
-
-- The **structural** layer is **X-free** and touches neither `F` nor data — that
-  is what lets it plug into d-separation (graph reachability) and hold for
-  *every* parameterization. `abs_state = { dag; labels; measured }`.
-- The **mechanism** layer carries `F` and produces the log. `dom` rides here (it
-  is value-space metadata) and grows when `Randomize` adds a node. It evaluates
-  against the fixed program graph `G0` — graph surgery is *inert for values*
-  (each op makes the affected node ignore its parents) — so it carries no DAG:
-  `unit_state = { cur_fun; log }`.
-- Neither layer alone yields a distribution: the DAG fixes only the Markov
-  factorization (the independence structure), the numbers need `F` and the
-  exogenous law. The **denotation** reads the whole tuple `⟨G, F⟩` plus
-  `P_U`. This is the *only* place the two sides are bundled — bundle the
-  *reading*, never the state.
-
-### Transformation rules
-
-Each operation has a rule on the structural side and a rule on the mechanism
-side (defined separately; bundled only at the denotation):
-
-| op | structural (`G`) | mechanism (`F`, `dom`) | observation |
+| op | structural (`α`) | mechanism | observation |
 |---|---|---|---|
 | `Intervene n v` | remove incoming edges to `n` | `f_n := const v` | — |
-| `Randomize n r` | add fresh source `r → n`, remove other incoming | `f_n := f_unobs`; draw `(n,v)` shadows `n` | — |
+| `Randomize n` | remove incoming edges to `n` | draw `v ~ uniform`, then `f_n := const v` (D3) | — |
 | `Measure n` | — | — | append `n`'s current value to the log |
 
-Concrete encodings: `Intervene n v = do_graphfun n v` on the fixed graph;
-`Randomize n r = randomize_graphfun n` (n reads its own exogenous draw), with the
-randomizer value injected as `(n, v)` at the head of the individual, *shadowing*
-n's natural noise (`get_assigned_value` returns the first match). No fresh node,
-no surgery on the mechanism side — `r` is used only structurally.
+`Intervene` and `Randomize` are structurally identical; they differ only in
+where n's value comes from. `Measure` is the only op that changes nothing on
+either projection yet is the only one that produces data.
 
-### G and F need not structurally agree
+## Two correctness theorems
 
-A tempting but **wrong** goal is "prove the `G`-transform and the `F`-transform
-agree with each other." They do not — under the fresh-node-free `Randomize` the
-equality is literally *false*: `G'` has the edge `r → n`, but `F'` makes `n` a
-noise-root that never reads `r`. Their *syntax* disagrees; what must hold is that
-they denote the same **distribution**. So "agreement" is always routed through
-the denotation, never asserted between the two representations. (This is the
-trivial `graphs_agree` lesson with teeth: even the *content* of a direct G↔F
-identity is wrong, not merely shallow.) The extra `r → n` edge only makes `G'` a
-*sound over-approximation* of `F'`'s real dependencies — an extra edge can delete
-a d-separation but never fabricate one — which is exactly the abstract-
-interpretation soundness relation, and is all verification needs.
-
-### Two correctness theorems
-
-**A. Adequacy of the transform** (the rules implement `do`). The transform
-commutes with the semantic do-operator on distributions:
+**A. Adequacy of the transform** (the rules implement `do`), now typeable
+because distributions are not indexed by the graph:
 
 ```
-              transform(op)
-        M  ───────────────►  M'
-        │                     │
-       ⟦·⟧                   ⟦·⟧
-        ▼                     ▼
-        P  ───────────────►  P'
-                do_op
+⟦step op M⟧ = do_op ⟦M⟧        (as kernels: equal at every P_U)
 ```
 
-`⟦transform(op)(M)⟧ = do_op(⟦M⟧)`. This is where `G` and `F` "meet": both
-describe the same `P'`, mediated by the denotation `⟦·⟧`. The probability-free
-per-world core for `Randomize` is **done** (see below).
+For `Randomize n`: `⟦Randomize n⟧ M = uniform ⊗ (fun v => ⟦do(n=v)⟧ M)` — a
+mixture of interventions. The per-world core is **done**
+(`randomize_semantic_do`); the distributional lift is pushforward congruence.
 
-**B. Soundness of the abstraction** (why static verification is valid).
-d-separation on `G'` implies the target independence / identification in
-`P' = ⟦M'⟧`. This survives the G/F structural disagreement (over-approximation is
-sound) and is the dsep-core theorem (d-sep ⟺ semantic separation) lifted to
-post-experiment graphs.
+**B. Soundness of the abstraction** (why static verification is valid):
+d-separation on `α M'` implies the target independence / identification in
+`⟦M'⟧`. Per-mechanism version done (`backdoor_correspondence`); distributional
+version says the log identifies `P(R | do(T))` — needs the drawn treatments
+uniform and independent of confounders, which D3 gives by construction.
 
-**Design correctness = A + B:** A says `P'` is the intended interventional
-distribution; B says the `measured`/log footprint structurally identifies it.
+**Design correctness = A + B.**
 
-Proof strategy:
-- Assume a finite probability space; prove **multiset equality** to bypass general probability theory.
-- First milestone: prove correctness for RCT (`Randomize`).
+Proof strategy: finite probability, computable `dist` over Q (D4), equality of
+distributions is observational.
 
-### Done: RCT counterfactual consistency (`Experiment/Correctness.v`)
+## Status: done and surviving
 
-Probability-free **per-world core of Theorem A** for `Randomize`, proved (no
-admits). Fresh-node-free formulation — the mechanism side needs no graph surgery:
-
-```coq
-Theorem randomize_semantic_do : ...
-  find_value G (randomize_graphfun n g) w ((n, v) :: U) []
-  = semantic_do n v G g w U.
-```
-
-On the stratum where the injected randomizer draw is v, the randomized mechanism
-— evaluated against the **fixed** graph G with no surgery — gives every node its
-do(n=v) counterfactual value, individual by individual. `v` enters as *data* on
-the left (shadowing n's exogenous slot) and as *surgery* on the right
-(`semantic_do = do n G + do_graphfun`); the two are indistinguishable. Proved by
-strong induction on topological-sort index, dsep-core style. Supporting lemmas:
-
-- `randomize_value_at_n` — node n reads its shadowed draw (`f_unobs`), yielding v.
-- `randomize_do_step` — for w ≠ n both sides run the original g on the same
-  parents; the shadowing `(n,v)` is invisible to w.
-- `do_value_at_n` — the do-side value at n is v.
-- `G_well_formed_do/_randomize`, `contains_cycle_do/_randomize` — surgeries
-  preserve well-formedness and acyclicity. These serve the **structural** layer's
-  invariants (its graph still uses the fresh source `r`), not the value path.
-- `randomize_then_measure` — corollary against `apply_op`: the mechanism
-  `Randomize` against the fixed program graph `G0` equals do(n=v). Requires the
-  individual to carry the injected draw `(n, v)` — concrete `Randomize` does not
-  yet inject it (**known gap**).
-
-Lifting this per-world fact over the randomizer's law and the population gives
-`P'` — i.e. Theorem A for `Randomize` — which is the multiset/probability layer
-(milestones 4–5). What the per-world theorem does *not* yet say: that the log
-identifies `P(R | do(T))`; that needs the injected draws uniform and independent
-of confounders (Theorem B's job). Also add to `experiment_wf`: every individual
-in `sample` assigns all nodes (currently missing).
-
-The surviving cross-layer fact at the value level is a data-free **simulation
-invariant** (`measured_agree`): the log's node footprint equals the structural
-`measured` set, step for step — infrastructure, not a theorem.
-
-**Open modeling decision** (flagged): where per-unit randomizer draws live — a
-separate exogenous family vs. shadowing slot `n` — and how they get injected
-during execution (the "known gap" above).
-
-### Probability infrastructure
-
-- Build a self-contained finite probability library rather than importing infotheo, but be aware of the risk: needs tend to grow, and it may become worth switching to an existing library later. Design the probability layer with a narrow interface so migration to infotheo remains feasible if needed.
-
-## Static analysis techniques for identifiability
-
-Each design-correctness criterion is a **graphical (syntactic) check** on the
-post-experiment DAG that certifies `P(R | do(T))` is identifiable, paired with a
-**value-level (semantic) counterpart** and a soundness/completeness theorem
-between them — i.e. an instance of **Theorem B**. Curated here: the backdoor pair
-is done; the rest are pinned TODOs. Each new one is a `syntactic_*` bool check, a
-`semantic_*` Prop, and a `*_correspondence` theorem.
-
-### Done: backdoor criterion (`Experiment/Main.v`)
-
-```coq
-Definition syntactic_backdoor (G : graph) (T R : node) (Z : nodes) : bool :=
-  no_descendant_of_b T G (cond_set T R Z)
-  && d_separated_bool T R (remove_outgoing T G) (cond_set T R Z).
-
-Definition semantic_backdoor (X : Type) `{EqType X}
-    (G : graph) (T R : node) (Z : nodes) : Prop :=
-  no_descendant_of_b T G (cond_set T R Z) = true /\
-  semantically_separated X (remove_outgoing T G) T R (cond_set T R Z).
-
-Theorem backdoor_correspondence : ...
-  syntactic_backdoor G T R Z = true <-> semantic_backdoor X G T R Z.
-```
-
-- **Adjustment set** `cond_set T R Z` = `Z` deduplicated and stripped of `T`, `R`
-  (never valid covariates) — so `each_node_appears_once` and `T,R ∉ Z` hold by
-  construction and are *not* theorem hypotheses.
-- **Syntactic side**: `Z` contains no descendant of `T`, and `T` is d-separated
-  from `R` given `Z` in `remove_outgoing T G` — the graph with `T`'s *outgoing*
-  edges deleted, so only into-`T` (backdoor) paths survive. A decidable check.
-- **Semantic side**: same admissibility guard, but blocking is
-  `semantically_separated` — perturbing `T` never changes `R` given `Z`, for
-  *every* mechanism (∀ graphfun).
-- **Proof (brief)**: the shared no-descendant guard splits off via `andb`; the
-  remaining `d_separated_bool ⟺ semantically_separated` is dsep-core's
-  `semantic_and_d_separation_equivalent` on the outgoing-mutilated graph.
-  Remaining hypotheses: `R ∈ G`, `T ≠ R`, `G` well-formed/acyclic (transferred
-  through edge removal by `G_well_formed_/contains_cycle_remove_outgoing`).
-- **RCT** is the `Z = ∅` special case (randomizing `T` severs all backdoor paths).
-
-### TODO: frontdoor criterion
-
-Unobserved confounding of `T → R`, but a fully-mediating *observed* mediator `M`
-(`T → M → R`, no direct `T → R`, confounder doesn't touch `M`). Estimand = two
-chained adjustments; conditions on the mediator. `syntactic_frontdoor` /
-`semantic_frontdoor` + correspondence.
-
-### TODO: do-calculus (three rules)
-
-The general engine — insertion/deletion of observations, action/observation
-exchange, insertion/deletion of actions — each a d-separation condition in a
-mutilated graph. Backdoor is essentially rule 2. A verified do-calculus rewrite
-system would subsume backdoor and frontdoor.
-
-### TODO: ID algorithm
-
-Tian–Pearl / Shpitser–Pearl: sound **and complete** for nonparametric
-identifiability of `P(R | do(T))` from the observed distribution with latents.
-The general endpoint (backdoor/frontdoor are special cases), and the natural
-place to *output the estimand*, not just a yes/no.
-
-### TODO: instrumental variables (different shape)
-
-Instrument `Z → T`, independent of confounders, affecting `R` only through `T`.
-**Not** nonparametrically point-identified (the ID algorithm returns "not
-identifiable"): gives bounds (Balke–Pearl) or a LATE under monotonicity. So
-"correct" widens to *identifiable-under-extra-assumptions or bounded*. Also the
-case that breaks the fixed-`G0` evaluation shortcut (see Semantics).
-
-### TODO: testable implications (model validation, not identifiability)
-
-The conditional independences a DAG *entails* (its d-separations) are exactly the
-constraints to check against real data to *falsify* the model. Reuses
-`semantically_separated` / `d_separated_bool` directly — the "input your CI
-assumptions and see whether the model implies them" use case.
-
-## Todo outside of this codebase
-
-- Curate a list of historical experiments and check whether the framework can express them. Start by collecting candidate experiments this week.
-- Study **natural experiments** (sequences of interventions/circumstances that isolate causal effects when an RCT is infeasible) and attempt to simulate them in this framework. (Avoid framing this as "quasi-experiments" — that category is ill-defined.)
+- **`randomize_semantic_do`** (`Correctness.v`) — per-world core of Theorem A
+  for Randomize, proved, no admits. Survives the reframe verbatim (it is a
+  statement about `find_value`, not about the experiment record). Now read as:
+  the bridge between the shadow encoding and the do-surgery encoding, i.e. the
+  stratum-v lemma for the mixture in Theorem A.
+- **`backdoor_correspondence`** (`Main.v`) — syntactic ⟺ semantic backdoor via
+  dsep-core's `semantic_and_d_separation_equivalent`; conditioning set
+  deduplicated internally (`dedup`). Untouched by the reframe.
+- **`simple_rct_syntactically_correct`** (`Correctness.v`) — restated under D1
+  and reproved (2026-07-23): the post-experiment DAG is `do T G`; after the
+  backdoor mutilation T is *isolated*, so d-separation with Z = [] is immediate.
+  The proof shrank from ~240 lines of fresh-node adjacency analysis to three
+  small isolation lemmas.
+- **Agreement refactor** (2026-07-23): `Randomize` has no `r`; `abs_apply_op`'s
+  Randomize case = Intervene's surgery; all fresh-node lemmas
+  (`add_fresh_source`, `G_well_formed_randomize`, `contains_cycle_randomize`,
+  `rct_*`) deleted — recoverable from git if the IV work revives them.
+- `measured_agree` — the log's node footprint equals the abstract `measured`
+  set; simulation infrastructure, unchanged.
 
 ## Milestones
 
-1. Generalize node labels / objective to vector-valued T and R.
-2. Formalize the d-separation-based correctness criterion (validity + executability) — this is **Theorem B** (abstraction soundness) applied to the design.
-3. Define the structural (`G`) and mechanism (`F`) transformation rules for {Intervene, Randomize, Measure}, plus the denotation `⟦⟨G,F,dom⟩,P_U⟧ = P`.
-4. Build minimal finite probability layer (multiset-based distribution equality).
-5. Prove **Theorem A** (transform commutes with `do`) for RCT. *(per-world core done — see `Correctness.v`; distributional lift over the randomizer's law remains)*
+Proposed order (dates are suggestions — adjust with supervisor):
 
-(1)-(5) due 7/15
+- **M0** ✅ 2026-07-23 — agreement refactor (D1): no fresh node, RCT theorem reproved.
+- **M1** (≈ 2 wks) — **Prob.v rewrite**: `dist A = list (A * Q)`; `ret`, `bind`,
+  `uniform`, event probability, `≈`, monad laws up to `≈`, pushforward
+  congruence (`(∀u, f u = g u) → map f d ≈ map g d`). Deletes
+  `world`/`enum_worlds`/`prob_measure` and both `Admitted`s.
+- **M2** (small) — `find_value` **totality** under wf (pieces exist:
+  `find_value_evaluates_to_g`); drop `option` from `apply_op` *before* adding
+  `dist` on top.
+- **M3** (≈ 1 wk) — **`model` record** + `wf_model`; one transform per op on
+  `model`; projection `α`; agreement lemma `α (step op M) = abs_step op (α M)`;
+  ops preserve `wf_model` (in particular `dag_fun_compatible`).
+- **M4** (≈ 2 wks) — **distribution semantics**: `run : model → operations →
+  state → dist state` (coins bound inline per D3); `⟦e⟧ : dist U → dist log`;
+  `sample` removed from `experiment`, empirical distribution as input;
+  denotation `⟦M⟧` as pushforward along `find_value`.
+- **M5** (≈ 2 wks) — **Theorem A**: Randomize (lift `randomize_semantic_do` by
+  congruence over the uniform mixture), then Intervene (near-definitional),
+  then Measure.
+- **M6** (≈ 3 wks) — **Theorem B, distributional**: in `⟦simple_rct⟧`, the log
+  identifies P(R | do(T)); combines `backdoor_correspondence` with uniformity +
+  independence of the drawn treatment.
+- **M7** — vector-valued T and R (do not hard-code singletons).
+- **M8** — `exp` AST with `Seq`/`If`: adaptive designs, dynamic treatment
+  regimes; abstract layer becomes branch-join over-approximation.
+- **M9+** — frontdoor, do-calculus rules, ID algorithm, IV/non-compliance
+  (reintroduces the explicit randomizer node); `examples/` of historical and
+  natural experiments.
 
-6. Prove Theorem A (adequacy) and Theorem B (d-sep soundness) for all current operations.
-7. Extend operations: Condition, Stratify, Timestep.
-8. Future work: asymptotic equivalence of experiments (sample-independence in the limit).
+**POPL SRC target** (late Oct / early Nov): the story "experiments as
+probabilistic programs — a verified RCT" needs M1–M6.
+
+## Static analysis techniques for identifiability
+
+Each criterion = a decidable `syntactic_*` check on `α` of the post-experiment
+model + a `semantic_*` counterpart + a `*_correspondence` theorem (instances of
+Theorem B).
+
+### Done: backdoor criterion (`Experiment/Main.v`)
+
+`syntactic_backdoor` / `semantic_backdoor` / `backdoor_correspondence`, with
+the conditioning set deduplicated internally. RCT is the Z = ∅ special case —
+now via **isolation** (D1): randomizing T leaves it with no incident edges in
+the mutilated graph.
+
+### TODO: frontdoor criterion
+Fully-mediating observed mediator under unobserved T–R confounding; two chained adjustments.
+
+### TODO: do-calculus (three rules)
+Each rule a d-separation condition in a mutilated graph; would subsume backdoor and frontdoor.
+
+### TODO: ID algorithm
+Tian–Pearl / Shpitser–Pearl; sound and complete; outputs the estimand.
+
+### TODO: instrumental variables (different shape)
+Not point-identified; bounds (Balke–Pearl) or LATE under monotonicity. Requires
+non-compliance modeling — this is where the explicit randomizer node `r → T`
+returns (see D1).
+
+### TODO: testable implications
+The d-separations a DAG entails, checked against data to falsify the model; reuses `d_separated_bool` / `semantically_separated` directly.
+
+## Todo outside of this codebase
+
+- Curate historical experiments; check the framework can express them.
+- Study natural experiments and simulate them in the framework (avoid the ill-defined "quasi-experiment" framing).
 
 ## Deadlines
 
-- POPL Student Research Competition: submission deadline typically end of October / early November.
+- POPL Student Research Competition: submission typically end of October / early November.
 
 ## Repo Conventions (for Claude Code)
 
-- Language: Rocq (Coq). Keep the probability layer behind a small interface module.
-- Suggested layout:
-  - `Experiment/Main.v` — node labels, experiment record, operations, programs, structural (`G`) and mechanism (`F`) transformation rules
-  - `Experiment/Prob.v` — finite distributions, multiset equality, the denotation `⟦⟨G,F,dom⟩,P_U⟧ = P`.
-  - `Experiment/Correctness.v` — validity/executability predicates; Theorem A (adequacy) and Theorem B (d-sep soundness).
-  - `examples/` — encodings of historical and natural experiments (future work)
-- Keep simplifying assumptions (no measurement error, no execution error, finite sample) documented in module headers so they're not silently violated.
+- Language: Rocq. `dsep-core/` is Anna's code — read-only.
+- Layout:
+  - `Experiment/Main.v` — labels, `aug_graph`, operations, (soon) `model` + one transform per op, backdoor pair.
+  - `Experiment/Prob.v` — to be rewritten (M1): `dist` over Q behind a narrow interface; then the denotation.
+  - `Experiment/Correctness.v` — per-world core (`randomize_semantic_do`), RCT syntactic correctness; later Theorems A and B.
+  - `examples/` — encodings of historical/natural experiments (future).
+- Keep the probability layer behind a small interface (migration to infotheo must stay feasible).
+- Keep simplifying assumptions documented in module headers.
+- Designer's choices are decided with Blanca first, then logged in the Decision log above.

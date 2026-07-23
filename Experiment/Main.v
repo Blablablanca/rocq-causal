@@ -54,10 +54,13 @@ Definition node_dom (d : node_card) (n : node) : list nat := seq 0 (d n).
 (* Augmented graph                                                       *)
 (* ===================================================================== *)
 
+(* The structural layer is value-free: it carries only the DAG and the labels
+   needed to locate T / R / Unmeasurable.  Node domains ([node_card]) are
+   value-space metadata and belong to the denotation -- [Prob.v] already takes
+   [dom : node_card] as its own parameter -- so they are NOT a field here. *)
 Record aug_graph : Type := mk_aug_graph {
   dag      : graph;
   label_of : node -> node_label;
-  dom      : node_card;
 }.
 
 (* Example: x -> y and x <- z -> y, where x:Treatment, y:Response.
@@ -69,11 +72,6 @@ Definition G_3 : aug_graph :=
               | 1 => Treatment
               | 2 => Response
               | _ => Unlabeled
-              end)
-    (fun n => match n with
-              | 1 => 2   (* x: values {0,1} = no treatment / treatment *)
-              | 2 => 3   (* y: values {0,1,2} = three outcome levels *)
-              | _ => 2   (* z (and any other node): binary *)
               end).
 
 Definition nodes_with_label (ag : aug_graph) (r : node_label) : nodes :=
@@ -91,19 +89,18 @@ Definition is_unmeasurable (ag : aug_graph) (n : node) : bool :=
 Definition measurable_nodes (ag : aug_graph) : nodes :=
   filter (fun n => negb (is_unmeasurable ag n)) (nodes_in_graph (dag ag)).
 
-(* a well-formed aug_graph contains >=1 treatment and response nodes,
-   and every node in the graph has a nonempty value domain *)
+(* a well-formed aug_graph is an acyclic, well-formed DAG with >=1 treatment and
+   response node.  (The old "every node has a nonempty domain" clause moved out
+   with [dom]: it is a value-space condition for the denotation layer.) *)
 Definition wf_aug_graph (ag : aug_graph) : Prop :=
   G_well_formed (dag ag) = true /\
   contains_cycle (dag ag) = false /\
   treatment_nodes ag <> [] /\
-  response_nodes ag <> [] /\
-  (forall n, node_in_graph n (dag ag) = true -> 0 < dom ag n).
+  response_nodes ag <> [].
 
 Example wf_G_3 : wf_aug_graph G_3.
 Proof.
   repeat split; try reflexivity; try discriminate.
-  intros n _. destruct n as [| [| [| n']]]; apply Nat.lt_0_succ.
 Qed.
 
 Lemma wf_has_treatment : forall ag,
@@ -120,7 +117,7 @@ Lemma wf_has_response : forall ag,
   wf_aug_graph ag ->
   exists r, In r (response_nodes ag).
 Proof.
-  intros ag [_ [_ [_ [Hne _]]]].
+  intros ag [_ [_ [_ Hne]]].
   destruct (response_nodes ag) as [| r rest] eqn:Heq.
   - contradiction.
   - exists r. left. reflexivity.
@@ -130,10 +127,12 @@ Qed.
 (* Operations and operationss                                               *)
 (* ===================================================================== *)
 
-(* Values are nat codes in 0 .. dom n - 1 (Universal Assumption 4). *)
+(* Values are nat codes in 0 .. dom n - 1 (Universal Assumption 4); the range
+   check [v < dom n] is a value-space condition and now lives with the
+   denotation layer, not in the structural [wf_operation] below. *)
 Inductive operation : Type :=
   | Intervene (n : node) (v : nat)   (* do(n=v): set n to a specific value *)
-  | Randomize (n : node) (r : node)  (* RCT: remove incoming edges to n, add fresh r → n *)
+  | Randomize (n : node)             (* RCT: n's value is drawn by the experimenter's coin *)
   | Measure   (n : node).            (* record n's current value into the log *)
 
 
@@ -142,9 +141,9 @@ Definition operations : Type := list operation.
 Definition wf_operation (ag : aug_graph) (op : operation) : Prop :=
   match op with
   | Intervene n v =>
-      node_in_graph n (dag ag) = true /\ v < dom ag n
-  | Randomize n r =>
-      node_in_graph n (dag ag) = true /\ node_in_graph r (dag ag) = false
+      node_in_graph n (dag ag) = true
+  | Randomize n =>
+      node_in_graph n (dag ag) = true
   | Measure n =>
       node_in_graph n (dag ag) = true /\ label_of ag n <> Unmeasurable
   end.
@@ -167,9 +166,6 @@ Definition semantic_do {X: Type} (a: node) (alpha: X)
 
 Definition remove_incoming (n : node) (G : graph) : graph :=
   (fst G, remove_edges_into n (snd G)).
-
-Definition add_fresh_source (src tgt : node) (G : graph) : graph :=
-  (src :: fst G, (src, tgt) :: snd G).
 
 (* dag and nodefun are compatible iff |domain of nodefun n| <= |pa(n)| for all n in G *)
 Definition dag_fun_compatible (G : graph) (g : @graphfun nat) : Prop :=
@@ -338,13 +334,48 @@ Definition apply_op (G0 : graph) (U : individual) (st : unit_state) (op : operat
   match op with
   | Intervene n v =>
       Some (mk_unit_state (do_graphfun n v (cur_fun st)) (log st))
-  | Randomize n r =>
+  | Randomize n =>
       Some (mk_unit_state (randomize_graphfun n (cur_fun st)) (log st))
   | Measure n =>
       match find_value G0 (cur_fun st) n U [] with
       | Some v => Some (mk_unit_state (cur_fun st) (log st ++ [(n, v)]))
       | None   => None
       end
+  end.
+
+(* --------------------------------------------------------------------- *)
+(* Structural (abstract) counterpart of [apply_op]                        *)
+(* --------------------------------------------------------------------- *)
+
+(* The same three operations read on the OTHER layer.  [apply_op] above
+   rewrites the mechanism F (and emits the log); [abs_apply_op] below rewrites
+   the DAG (and records the measured footprint).  The two layers AGREE
+   structurally: [Intervene] and [Randomize] both cut n loose from its parents
+   (remove_incoming), exactly mirroring the mechanism side where f_n stops
+   reading them (constant resp. exogenous draw).  [Measure] is the odd one
+   out: the only op that changes nothing on either state, yet the only one
+   that produces data. *)
+Record abs_state : Type := mk_abs_state {
+  abs_graph : aug_graph;
+  measured  : nodes;
+}.
+
+Definition abs_apply_op (st : abs_state) (op : operation) : abs_state :=
+  match op with
+  | Intervene n _ =>
+      mk_abs_state
+        (mk_aug_graph
+          (remove_incoming n (dag (abs_graph st)))
+          (label_of (abs_graph st)))
+        (measured st)
+  | Randomize n =>
+      mk_abs_state
+        (mk_aug_graph
+          (remove_incoming n (dag (abs_graph st)))
+          (label_of (abs_graph st)))
+        (measured st)
+  | Measure n =>
+      mk_abs_state (abs_graph st) (measured st ++ [n])
   end.
 
 (* ---- Helper lemmas: how find_parents/node_in_graph interact with surgery ---- *)
@@ -391,55 +422,10 @@ Proof.
   apply find_parents_from_edges_remove_self.
 Qed.
 
-Lemma find_parents_add_fresh_source_self : forall (r n : node) (G : graph),
-  find_parents n (add_fresh_source r n G) = r :: find_parents n G.
-Proof.
-  intros r n [V E]. unfold add_fresh_source, find_parents. simpl.
-  rewrite Nat.eqb_refl. reflexivity.
-Qed.
-
-Lemma find_parents_add_fresh_source_neq : forall (r n w : node) (G : graph),
-  w <> n ->
-  find_parents w (add_fresh_source r n G) = find_parents w G.
-Proof.
-  intros r n w [V E] Hneq. unfold add_fresh_source, find_parents. simpl.
-  assert (Hnw: (n =? w) = false) by (apply Nat.eqb_neq; auto).
-  rewrite Hnw. reflexivity.
-Qed.
-
-Lemma find_parents_randomize_self : forall (r n : node) (G : graph),
-  find_parents n (add_fresh_source r n (remove_incoming n G)) = [r].
-Proof.
-  intros r n G.
-  rewrite find_parents_add_fresh_source_self.
-  rewrite find_parents_remove_incoming_self.
-  reflexivity.
-Qed.
-
-Lemma find_parents_randomize_neq : forall (n r w : node) (G : graph),
-  w <> n ->
-  find_parents w (add_fresh_source r n (remove_incoming n G)) = find_parents w G.
-Proof.
-  intros n r w G Hneq.
-  rewrite find_parents_add_fresh_source_neq by exact Hneq.
-  rewrite find_parents_remove_incoming_neq by exact Hneq.
-  reflexivity.
-Qed.
-
 Lemma node_in_graph_remove_incoming : forall (n w : node) (G : graph),
   node_in_graph w (remove_incoming n G) = node_in_graph w G.
 Proof.
   intros n w [V E]. reflexivity.
-Qed.
-
-Lemma node_in_graph_add_fresh_source_neq : forall (r n w : node) (G : graph),
-  w <> r ->
-  node_in_graph w (add_fresh_source r n G) = node_in_graph w G.
-Proof.
-  intros r n w [V E] Hneq. unfold add_fresh_source, node_in_graph. simpl.
-  destruct (r =? w) eqn:Hrw.
-  - apply Nat.eqb_eq in Hrw. subst r. exfalso. apply Hneq. reflexivity.
-  - reflexivity.
 Qed.
 
 Lemma apply_op_preserves_wf : forall (G0 : graph) (U : individual) (st st' : unit_state) (op : operation),
@@ -448,7 +434,7 @@ Lemma apply_op_preserves_wf : forall (G0 : graph) (U : individual) (st st' : uni
   unit_state_wf G0 st'.
 Proof.
   intros G0 U st st' op Hwf Hop.
-  destruct op as [n v | n r | n]; simpl in Hop.
+  destruct op as [n v | n | n]; simpl in Hop.
   - (* Intervene n v *)
     inversion Hop; subst; clear Hop.
     unfold unit_state_wf, dag_fun_compatible in *. cbn [cur_fun log].
@@ -457,7 +443,7 @@ Proof.
     destruct (w =? n) eqn:Hwn.
     + reflexivity.
     + apply Hwf; assumption.
-  - (* Randomize n r *)
+  - (* Randomize n *)
     inversion Hop; subst; clear Hop.
     unfold unit_state_wf, dag_fun_compatible in *. cbn [cur_fun log].
     intros w u pa1 pa2 Hin Hagree.
@@ -526,7 +512,7 @@ Proof.
   - simpl in Hrun.
     destruct (apply_op G0 U st op) as [st1|] eqn:Hop; [| discriminate Hrun].
     specialize (IH st1 st' Hrun).
-    destruct op as [n v | n r | n]; simpl in Hop.
+    destruct op as [n v | n | n]; simpl in Hop.
     + inversion Hop; subst. simpl in IH. simpl. lia.
     + inversion Hop; subst. simpl in IH. simpl. lia.
     + destruct (find_value G0 (cur_fun st) n U []) as [v|] eqn:Hfv; [| discriminate Hop].
@@ -557,32 +543,6 @@ Definition concrete_logs (e : experiment) : option (list (assignments nat)) :=
 (* ===================================================================== *)
 (* Abstract (graph-surgical) semantics                                   *)
 (* ===================================================================== *)
-
-Record abs_state : Type := mk_abs_state {
-  abs_graph : aug_graph;
-  measured  : nodes;
-}.
-
-Definition abs_apply_op (st : abs_state) (op : operation) : abs_state :=
-  match op with
-  | Intervene n _ =>
-      mk_abs_state
-        (mk_aug_graph
-          (remove_incoming n (dag (abs_graph st)))
-          (label_of (abs_graph st))
-          (dom (abs_graph st)))
-        (measured st)
-  | Randomize n r =>
-      mk_abs_state
-        (mk_aug_graph
-          (add_fresh_source r n (remove_incoming n (dag (abs_graph st))))
-          (fun m => if m =? r then Unlabeled else label_of (abs_graph st) m)
-          (* n copies r, so the fresh randomizer r draws from n's domain *)
-          (fun m => if m =? r then dom (abs_graph st) n else dom (abs_graph st) m))
-        (measured st)
-  | Measure n =>
-      mk_abs_state (abs_graph st) (measured st ++ [n])
-  end.
 
 Fixpoint abs_run (st : abs_state) (p : operations) : abs_state :=
   match p with
@@ -617,7 +577,7 @@ Lemma apply_op_measured_agree : forall (G0 : graph) (U : individual) (st st1 : u
   map fst (log st1) = measured (abs_apply_op a op).
 Proof.
   intros G0 U st st1 a op Heq Hop.
-  destruct op as [n v | n r | n]; simpl in Hop.
+  destruct op as [n v | n | n]; simpl in Hop.
   - inversion Hop; subst. simpl. exact Heq.
   - inversion Hop; subst. simpl. exact Heq.
   - destruct (find_value G0 (cur_fun st) n U []) as [v0|] eqn:Hfv; [| discriminate Hop].
@@ -742,21 +702,21 @@ Qed.
 (* ===================================================================== *)
 
 (* A [simple_rct] is an experiment over ANY causal DAG [G], graphfun [F] and
-   sample [S] whose program randomizes the treatment node [T] against a fresh
-   randomizer [rand] and then measures the response node [R].  For now we take a
-   single treatment and a single response node.  The correctness statement is in
-   [Correctness.v] ([simple_rct_syntactically_correct]). *)
+   sample [S] whose program randomizes the treatment node [T] and then measures
+   the response node [R].  For now we take a single treatment and a single
+   response node.  The correctness statement is in [Correctness.v]
+   ([simple_rct_syntactically_correct]). *)
 Definition simple_rct (G : aug_graph) (F : @graphfun nat) (S : list individual)
-    (T R rand : node) : experiment :=
-  mk_experiment G F S [Randomize T rand; Measure R].
+    (T R : node) : experiment :=
+  mk_experiment G F S [Randomize T; Measure R].
 
 (* The post-experiment DAG of a [simple_rct]: randomizing [T] deletes [T]'s
-   incoming edges and adds the fresh source [rand -> T]; measuring is inert on
-   the structural layer. *)
+   incoming edges -- the same surgery as an intervention on [T]; measuring is
+   inert on the structural layer. *)
 Lemma post_dag_simple_rct : forall (G : aug_graph) (F : @graphfun nat)
-    (S : list individual) (T R rand : node),
-  post_experiment_dag (simple_rct G F S T R rand)
-  = add_fresh_source rand T (remove_incoming T (dag G)).
+    (S : list individual) (T R : node),
+  post_experiment_dag (simple_rct G F S T R)
+  = remove_incoming T (dag G).
 Proof. reflexivity. Qed.
 
 (* Membership in [nodes_with_label] recovers both graph-membership and the
