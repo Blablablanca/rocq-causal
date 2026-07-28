@@ -13,6 +13,7 @@ Universal Assumptions:
 3. An experiment is measuring the treatment vector's effect on the reponse vector
 4. Every node (including unmeasurable) has a declared finite domain;
     Unmeasurable restricts observation, not existence.
+    - this means we only deal with finite probability. no measure theory.
 5. dag's are finite
 6. (for now) population is finite
 "
@@ -163,6 +164,37 @@ Definition do_graphfun {X: Type} (a: node) (alpha: X) (g: graphfun): graphfun :=
 Definition semantic_do {X: Type} (a: node) (alpha: X)
   (G: graph) (g: graphfun) (u: node) (U: assignments X): option X :=
   find_value (do a G) (do_graphfun a alpha g) u U [].
+
+(* ===================================================================== *)
+(* Total node evaluation (M2)                                             *)
+(* --------------------------------------------------------------------- *)
+(* [find_value] is total under well-formedness -- dsep-core's              *)
+(* [find_value_existence]: a well-formed acyclic graph with a COMPLETE     *)
+(* exogenous assignment [U] assigns every in-graph node a value.  [eval]   *)
+(* packages that as an OPTION-FREE evaluator.  The [0] default is provably *)
+(* dead code under wf (see [eval_find_value]) -- it is NOT a clamp; it     *)
+(* only names the value [find_value] already computes.  This is the total  *)
+(* "solve" the distribution semantics (M4) wraps in [fdistmap], so the     *)
+(* outcome law ranges over worlds, not option-worlds. *)
+Definition eval (G : graph) (g : @graphfun nat) (u : node) (U : assignments nat) : nat :=
+  match find_value G g u U [] with
+  | Some v => v
+  | None   => 0
+  end.
+
+Lemma eval_find_value :
+  forall (G : graph) (g : @graphfun nat) (u : node) (U : assignments nat),
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  is_assignment_for U (nodes_in_graph G) = true ->
+  node_in_graph u G = true ->
+  find_value G g u U [] = Some (eval G g u U).
+Proof.
+  intros G g u U Hwf Hcyc HU Hu.
+  destruct (find_value_existence nat G g U [] u
+              (conj Hwf Hcyc) (conj HU Hu)) as [v Hv].
+  unfold eval. rewrite Hv. reflexivity.
+Qed.
 
 Definition remove_incoming (n : node) (G : graph) : graph :=
   (fst G, remove_edges_into n (snd G)).
@@ -560,16 +592,6 @@ Definition post_experiment_dag (e : experiment) : graph :=
 (* Simulation invariant: concrete log tracks the abstract measured set   *)
 (* ===================================================================== *)
 
-(* The abstract and concrete semantics agree, step for step, on the DATA-FREE
-   footprint of the program -- which nodes get measured, in what order.  This
-   holds *by construction* precisely because the measured set is data-
-   independent; it is a simulation invariant, not the correctness theorem.
-   (There is no analogous "graphs_agree": the concrete semantics no longer
-   carries a graph, and the graph the abstract semantics computes is inert for
-   values.)  The real adequacy theorem lives at the value/log level -- see
-   Correctness.v -- where the logged values reproduce the distribution the
-   abstract post-experiment model denotes. *)
-
 Lemma apply_op_measured_agree : forall (G0 : graph) (U : individual) (st st1 : unit_state)
     (a : abs_state) (op : operation),
   map fst (log st) = measured a ->
@@ -608,9 +630,7 @@ Qed.
 (* ===================================================================== *)
 (* Backdoor criterion — syntactic and semantic                           *)
 (* ===================================================================== *)
-(* Deduplicate the conditioning set so the predicates depend only on Z as a
-   SET.  This discharges the [each_node_appears_once] requirement of dsep-core's
-   equivalence internally, so callers need not supply it. *)
+
 Definition dedup (Z : nodes) : nodes := nodup Nat.eq_dec Z.
 
 Lemma In_dedup : forall (x : node) (Z : nodes), In x (dedup Z) <-> In x Z.

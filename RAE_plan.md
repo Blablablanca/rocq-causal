@@ -13,9 +13,9 @@ A **correct design** means:
 *Algebraically:* the outcome law identifies P(R|do(T))
 2. **Executability** — all controlled/intervened nodes are not labeled unmeasurable.
 
-## Architecture: two probabilistic programs (reframe, 2026-07-23)
+## Architecture: two probabilistic programs
 
-Supervisor's reframe, adopted: the causal model and the experiment are **both
+the causal model and the experiment are **both
 probabilistic programs**, and the experiment is a **transformer from the
 distribution of the experimental units' innate characteristics to the outcome
 distribution**. Concretely:
@@ -41,17 +41,34 @@ Definition wf_model (M : model) : Prop :=
 the parents G declares. It is exactly the "syntax and semantics agree"
 condition, and it is preserved by every operation (a proof obligation per op).
 
+Notes on `wf_model` (discussion 2026-07-23):
+- "Every node has a mech function" needs **no clause**: `graphfun` is total on
+  `node = nat` (same idiom as `label_of`, `node_card`); off-graph junk is inert
+  because `find_value` only consults `mech` at in-graph nodes.
+- The compatibility direction is deliberately `⊆`, not `=`: G may declare an
+  edge F ignores (sound over-approximation); F must never read an undeclared
+  parent (would break Theorem B). Exact edge-relevance (faithfulness) is a
+  semantic assumption, not well-formedness.
+- **`dom` is deferred (D6).** At this stage there is no per-node `dom :
+  node_card`; nodes share a single value **finType** `V` (start with `bool` for
+  binary treatment/response, or a small `'I_k`). Nonempty-domain and
+  range-closure obligations then hold *by typing* — a value is a `V` by
+  construction — so `wf_model` keeps just the two clauses above. Per-node
+  heterogeneous `dom` returns at M7 (vector / richer values), not before.
+
 **Denotation** — the model is a probabilistic program with free exogenous
 variables, i.e. a *kernel*:
 
 ```
-⟦M⟧ : dist U  →  dist (assignments nat)
+⟦M⟧ : fdist U  →  fdist world        (world ≅ assignments over a value finType V)
 ```
 
-defined as the pushforward of the innate law along `find_value` (Pearl's SCM
-form: all randomness up front, then a deterministic solve). This reuses
-dsep-core's evaluator wholesale and needs no enumeration of worlds. The
-pushforward form covers straight-line programs, `If`, and bounded loops; only
+defined as the pushforward (`fdistmap`) of the innate law along the deterministic
+solve (Pearl's SCM form: all randomness up front, then solve). The **solve** is
+dsep-core's existing `nat`-valued `find_value`, reached through a boundary map
+`to_assign : world → assignments nat` (D5) — the causal value layer is never
+re-typed. This reuses the evaluator wholesale and needs no enumeration of worlds.
+The pushforward form covers straight-line programs, `If`, and bounded loops; only
 unbounded recursion would force a fully monadic evaluator, so definitions stay
 monadic to keep that door open.
 
@@ -111,15 +128,21 @@ Decisions taken 2026-07-23 (each was a consulted designer's choice):
 |---|---|---|---|
 | D1 | `Randomize n` = `remove_incoming n` structurally; **no fresh randomizer node**; `r` dropped from the AST | (a) graph literally unchanged — breaks the backdoor check and `simple_rct_syntactically_correct`; (b) fresh node on *both* sides — agreement also holds but the node set grows mid-run, complicating the distribution layer | randomization *is* an intervention whose value is drawn; the coin belongs to the experiment, not the model. Reintroduce an explicit `r → T` node only when modeling **non-compliance / IV** (assignment ≠ treatment received) |
 | D2 | P_U is an **input** (kernel view), not a model field | `model = {G; F; exo}` denoting a closed distribution | matches the transformer definition verbatim; keeps innate vs. experimental randomness cleanly separated; works because (per D1) the node set never changes |
-| D3 | `Randomize` mechanism = **draw v, then intervene** (`bind uniform (fun v => f_n := const v)`) | shadowing encoding (`f_n := f_unobs` + inject `(n,v)` into U) | U stays purely innate; structural rule literally shared with `Intervene`; operationally faithful (coin decides, patient receives). `randomize_semantic_do` survives as the proved bridge between the two encodings |
-| D4 | `dist A = list (A * Q)` with observational equality (`d₁ ≈ d₂ := ∀ E, Pr[E] equal`) | weighted list over R (nothing computes); unweighted multiset (uniform-only) | computable — examples check by `vm_compute`; decidable equality; narrow interface keeps migration to R/infotheo open |
+| D3 | `Randomize` mechanism = **draw v, then intervene** (`fdistbind d_n (fun v => f_n := const v)`); refined by D6 so the coin `d_n` is an *abstract* distribution, not hardcoded uniform | shadowing encoding (`f_n := f_unobs` + inject `(n,v)` into U) | U stays purely innate; structural rule literally shared with `Intervene`; operationally faithful (coin decides, patient receives). `randomize_semantic_do` survives as the proved bridge between the two encodings |
+| D4 | **Import infotheo** (`fdist` over `R`), *not* a homemade layer | homemade `dist = list (A*Q)` (computable, but hand-rolls every lemma + the setoid tax); homemade `list (A*R)` (loses computation *and* has no toolkit) | RCT theorems are symbolic/parametric — nothing to `vm_compute` in the general case, so Q's computation edge is moot; R avoids Q's setoid tax and brings `bigop`/`lra`/CI machinery. **Already installed** (infotheo 0.9.7 / mathcomp 2.5.0 / analysis 1.16.0 on Rocq 9.1.0), so the version risk is gone. Cost is the finType encoding, contained by D5 |
+| D5 | **Keep `nat`-valued mechanisms; encode only at the distribution boundary** | re-type `graphfun`/`find_value` into a finType `V` (forks dsep-core's proved value layer, re-proves `randomize_semantic_do`) | the causal core (incl. `randomize_semantic_do`) is reused *verbatim*; encoding cost concentrated in one bridge file (`world : finType`, `to_assign : world → assignments nat`, round-trip + range lemmas) |
+| D6 | **No `dom` yet: shared value finType `V` + abstract randomizer `d_n`** | thread `dom : node_card` now and make `Randomize` draw `uniform (node_dom dom n)` | `dom`'s two jobs split — *sample space* becomes "pick a finType `V`" (start `bool`); *"coin is uniform"* is a needless specialization. Abstract `d_n` proves a **stronger** theorem (RCT correct for any coin independent of U; uniform is a corollary) and defers per-node `dom` to M7 |
 
 Still open (bring to supervisor):
-- `Measure` when `find_value` returns `None`: prove totality under `wf` and drop
-  the `option` (preferred — avoids stacking `dist` on `option`), or carry
-  option values in the log.
-- Whether `dist` should be a quotient (canonical normalized form) or a setoid
-  under `≈`. Setoid is the default; revisit if rewriting friction grows.
+- `Measure` when the solve fails (`find_value = None`): prove totality under `wf`
+  and drop the `option` (preferred — avoids stacking `fdist` on `option`), or
+  carry option values in the log. **M2.**
+- **Identifiability positivity**: Theorem B needs the coin `d_n` to have full
+  support on `V` (overlap), and needs independence of confounders. Both hold for
+  the RCT by construction; state them as explicit hypotheses on `d_n`.
+- Whether to state distribution equality as infotheo's `=` on `fdist` (Leibniz,
+  via `fdist_ext`) throughout, or wrap a coarser event-equality relation. Default
+  to `fdist` `=`; revisit only if it forces awkward extensionality obligations.
 - Timing of `Stratify` / `Timestep` / bounded loops.
 
 ## Core Definitions
@@ -159,7 +182,7 @@ Inductive operation : Type :=
 | op | structural (`α`) | mechanism | observation |
 |---|---|---|---|
 | `Intervene n v` | remove incoming edges to `n` | `f_n := const v` | — |
-| `Randomize n` | remove incoming edges to `n` | draw `v ~ uniform`, then `f_n := const v` (D3) | — |
+| `Randomize n` | remove incoming edges to `n` | draw `v ~ d_n` (abstract coin, D6), then `f_n := const v` (D3) | — |
 | `Measure n` | — | — | append `n`'s current value to the log |
 
 `Intervene` and `Randomize` are structurally identical; they differ only in
@@ -175,20 +198,23 @@ because distributions are not indexed by the graph:
 ⟦step op M⟧ = do_op ⟦M⟧        (as kernels: equal at every P_U)
 ```
 
-For `Randomize n`: `⟦Randomize n⟧ M = uniform ⊗ (fun v => ⟦do(n=v)⟧ M)` — a
-mixture of interventions. The per-world core is **done**
-(`randomize_semantic_do`); the distributional lift is pushforward congruence.
+For `Randomize n`: `⟦Randomize n⟧ M = fdistbind d_n (fun v => ⟦do(n=v)⟧ M)` — a
+mixture of interventions over the abstract coin `d_n` (D6). The per-world core is
+**done** (`randomize_semantic_do`); the distributional lift is `fdistmap`/
+`fdistbind` congruence over that per-world equality.
 
 **B. Soundness of the abstraction** (why static verification is valid):
 d-separation on `α M'` implies the target independence / identification in
 `⟦M'⟧`. Per-mechanism version done (`backdoor_correspondence`); distributional
-version says the log identifies `P(R | do(T))` — needs the drawn treatments
-uniform and independent of confounders, which D3 gives by construction.
+version says the log identifies `P(R | do(T))` — needs the coin `d_n` to have
+**full support** (overlap) and be **independent of confounders**, both of which
+the RCT satisfies by construction (uniformity is *not* required — see D6).
 
 **Design correctness = A + B.**
 
-Proof strategy: finite probability, computable `dist` over Q (D4), equality of
-distributions is observational.
+Proof strategy: finite probability via infotheo `fdist` (D4), `nat` value layer
+reused through the boundary encoding (D5); distribution equality is infotheo's
+`=` on `fdist`.
 
 ## Status: done and surviving
 
@@ -217,26 +243,86 @@ distributions is observational.
 Proposed order (dates are suggestions — adjust with supervisor):
 
 - **M0** ✅ 2026-07-23 — agreement refactor (D1): no fresh node, RCT theorem reproved.
-- **M1** (≈ 2 wks) — **Prob.v rewrite**: `dist A = list (A * Q)`; `ret`, `bind`,
-  `uniform`, event probability, `≈`, monad laws up to `≈`, pushforward
-  congruence (`(∀u, f u = g u) → map f d ≈ map g d`). Deletes
-  `world`/`enum_worlds`/`prob_measure` and both `Admitted`s.
-- **M2** (small) — `find_value` **totality** under wf (pieces exist:
-  `find_value_evaluates_to_g`); drop `option` from `apply_op` *before* adding
-  `dist` on top.
-- **M3** (≈ 1 wk) — **`model` record** + `wf_model`; one transform per op on
-  `model`; projection `α`; agreement lemma `α (step op M) = abs_step op (α M)`;
-  ops preserve `wf_model` (in particular `dag_fun_compatible`).
+- **M1a** ✅ 2026-07-23 — **infotheo encoding spike** done (throwaway; lived in
+  scratchpad, not committed). Result: **every integration risk cleared on the
+  first compile.** infotheo's SSReflect `fdist` world and dsep-core's vanilla
+  `find_value` coexist in one file; a uniform `fdist world` pushed through
+  `fdistmap (outcome ∘ to_assign)` yields a genuine `R.-fdist 'I_2` (proved
+  `\sum_x od x = 1` via `FDist.f1`); the round-trip lemma held by `reflexivity`.
+  No import-order fighting, no `realType_ext` workaround, no path flags needed
+  (infotheo is in `user-contrib`, auto-loaded; `coq-infotheo` already in
+  `rocq-causal.opam`). **Reusable incantations for M1b:**
+  ```coq
+  From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals.
+  From infotheo Require Import fdist.
+  (* dsep-core imports as usual; then: *)
+  Local Open Scope fdist_scope.   (* for R.-fdist / fdistmap notation *)
+  Local Open Scope ring_scope.    (* for \sum over fdist masses *)
+  Variable R : realType.          (* keep the real field abstract, as infotheo's own examples do *)
+  Definition world := {ffun 'I_2 -> bool}.
+  Lemma world_card : #|world| = 3.+1.
+  Proof. by rewrite card_ffun card_bool card_ord. Qed.
+  Definition unif : R.-fdist world := fdist_uniform world_card.
+  ```
+  **Glue findings (honest):**
+  - *Scopes*: `fdist_scope` + `ring_scope` both needed; standard, ~0 cost.
+  - *Warnings*: infotheo triggers `notation-overridden`/`deprecated-library`
+    noise — silence per-file with `Set Warnings "-notation-overridden,-deprecated-library-file".`
+    at the top of `Prob.v` (NOT globally in `_CoqProject`, which would mask
+    dsep-core issues). `all_ssreflect` is deprecated in mathcomp 2.5 → migrate
+    to `all_boot`/`all_order` eventually; cosmetic.
+  - *Real cost confirmed*: the spike faked the finType codomain with
+    `inord (odflt 0 (find_value …))` — a clamp papering over `option nat`. Real
+    code needs **M2 first** (find_value totality, drop `option`) plus an honest
+    `nat → V` decode at the boundary. This validates the M2-before-denotation
+    ordering.
+  - *Per-lemma estimate for M1b*: the boundary encoding (`world`, `to_assign`,
+    2–3 round-trip lemmas) is **small and low-risk** (the hard one was
+    `reflexivity`); the `fdist` wrappers are one-liners over existing lemmas.
+    M1b is ~1 week, front-loaded risk now retired.
+- **M1b** ✅ 2026-07-23 — **`Prob.v` rewritten over infotheo**, no admits.
+  Deleted the old `world`/`enum_worlds`/`prob_measure` layer and both its
+  `Admitted`s. Delivered:
+  - *Narrow interface* — wrappers `dret`/`dmap`/`dbind`/`dunif` (implicit `R`),
+    and the congruence lemmas `dmap_eq` (`f =1 g -> dmap f P = dmap g P`) and
+    `dbind_eq` (pointwise continuation), proved via `fdist_ext` +
+    `fdistmapE`/`fdistbindE` + `eq_bigl`/`eq_bigr`; plus `dmap_comp` from
+    `fdistmap_comp`. These are exactly the lemmas the M5 RCT lift consumes.
+  - *D5 boundary* — `Node := seq_sub (nodes_in_graph G)` (nodes as a finType),
+    `world := {ffun Node -> V}`, `to_assign`, and the round-trip `to_assign_get`
+    (`get_assigned_value (to_assign w) (ssval i) = Some (decode (w i))`), proved
+    with a generic key-injective lookup helper + `val_inj` + `mem_enum`.
+  - *Gotchas logged for M4+*: (1) `Node` needs a `: finType` ascription or
+    canonical-structure resolution fails; (2) write `list I`, never `seq I` —
+    dsep-core's imports shadow mathcomp's `seq` type with stdlib's `seq` range
+    function; (3) mathcomp `in_nil` is shadowed by stdlib List's `in_nil`, so
+    close nil membership with `by []`, not `by rewrite in_nil`.
+- **M2** ✅ 2026-07-23 — **total node evaluator** in `Main.v`, no admits.
+  dsep-core already proves totality (`find_value_existence`: wf + acyclic +
+  complete `U` + `u ∈ G` ⟹ `∃v, find_value … = Some v`), so M2 just packages it:
+  `eval G g u U := match find_value G g u U [] with Some v => v | None => 0 end`
+  (option-free), with `eval_find_value` proving `find_value … = Some (eval …)`
+  under wf — so the `0` default is provably dead code, NOT a clamp (contrast the
+  spike's lossy `inord`). This is the total "solve" M4 wraps in `fdistmap`.
+  Resolves the open "Measure-on-None" question in favor of totality.
+  Remaining M4 prerequisite (deferred): `to_assign_complete`
+  (`is_assignment_for (to_assign w) (nodes_in_graph G) = true`) to discharge
+  `eval_find_value`'s completeness hypothesis for worlds — needs constructing
+  `seq_sub` elements from node membership; lives in `Prob.v`, built at M4.
+- **M3** (≈ 1 wk) — **`model` record** + `wf_model` (two clauses; range-closure
+  free by typing into `V`, per D6); one transform per op on `model`; projection
+  `α`; agreement lemma `α (step op M) = abs_step op (α M)`; ops preserve
+  `wf_model` (in particular `dag_fun_compatible`).
 - **M4** (≈ 2 wks) — **distribution semantics**: `run : model → operations →
-  state → dist state` (coins bound inline per D3); `⟦e⟧ : dist U → dist log`;
-  `sample` removed from `experiment`, empirical distribution as input;
-  denotation `⟦M⟧` as pushforward along `find_value`.
+  state → fdist state` (coins `d_n` bound inline via `fdistbind`, per D3/D6);
+  `⟦e⟧ : fdist U → fdist log`; `sample` removed from `experiment`, empirical
+  distribution as input; denotation `⟦M⟧` as `fdistmap` along the solve.
 - **M5** (≈ 2 wks) — **Theorem A**: Randomize (lift `randomize_semantic_do` by
-  congruence over the uniform mixture), then Intervene (near-definitional),
-  then Measure.
+  `fdistmap`/`fdistbind` congruence over the mixture `d_n`), then Intervene
+  (near-definitional), then Measure.
 - **M6** (≈ 3 wks) — **Theorem B, distributional**: in `⟦simple_rct⟧`, the log
-  identifies P(R | do(T)); combines `backdoor_correspondence` with uniformity +
-  independence of the drawn treatment.
+  identifies P(R | do(T)); combines `backdoor_correspondence` with the coin's
+  full-support + independence-of-confounders hypotheses (D6).
 - **M7** — vector-valued T and R (do not hard-code singletons).
 - **M8** — `exp` AST with `Seq`/`If`: adaptive designs, dynamic treatment
   regimes; abstract layer becomes branch-join over-approximation.
@@ -288,12 +374,20 @@ The d-separations a DAG entails, checked against data to falsify the model; reus
 
 ## Repo Conventions (for Claude Code)
 
-- Language: Rocq. `dsep-core/` is Anna's code — read-only.
+- Language: Rocq 9.1.0. `dsep-core/` is Anna's code — read-only, vanilla Rocq
+  (`nat`/`List`/`lia`), value layer stays `nat`-valued (D5).
+- Probability: **infotheo 0.9.7** (mathcomp 2.5.0, analysis 1.16.0) — already in
+  the `vsrocq` opam switch. Add `coq-infotheo` to `rocq-causal.opam` and its
+  logical paths to `_CoqProject`/Makefile at M1a.
 - Layout:
   - `Experiment/Main.v` — labels, `aug_graph`, operations, (soon) `model` + one transform per op, backdoor pair.
-  - `Experiment/Prob.v` — to be rewritten (M1): `dist` over Q behind a narrow interface; then the denotation.
+  - `Experiment/Prob.v` — rewritten over infotheo (M1b): the boundary encoding
+    (`world` finType, `to_assign`, round-trip lemmas) + narrow `fdist` wrappers;
+    then the denotation.
   - `Experiment/Correctness.v` — per-world core (`randomize_semantic_do`), RCT syntactic correctness; later Theorems A and B.
   - `examples/` — encodings of historical/natural experiments (future).
-- Keep the probability layer behind a small interface (migration to infotheo must stay feasible).
+- **Style boundary**: SSReflect/infotheo lives *inside* `Prob.v` behind the
+  narrow interface; the causal proofs stay vanilla Rocq. Don't let `fdist`/bigop
+  names leak into `Main.v`/`Correctness.v`.
 - Keep simplifying assumptions documented in module headers.
 - Designer's choices are decided with Blanca first, then logged in the Decision log above.

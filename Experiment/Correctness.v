@@ -312,19 +312,7 @@ Example rct_G_3_stratum_1_value :
   semantic_do 1 1 (dag G_3) g_3 2 [(1, 0); (2, 0); (3, 1)] = Some 2.
 Proof. reflexivity. Qed.
 
-(* =====================================================================
-   Syntactic correctness of a simplified RCT
-
-   A [simple_rct] over T (treatment) and R (response) is SYNTACTICALLY CORRECT
-   when its post-experiment DAG satisfies the backdoor criterion over T and R.
-   [Randomize T] performs the same structural surgery as an intervention --
-   it removes T's incoming edges (the randomizer is the experimenter's coin,
-   not a node of the model) -- so the backdoor check with Z = [] runs on
-   [remove_outgoing T (remove_incoming T G)], in which T is completely
-   ISOLATED: no edge enters it (severed by randomization) and none leaves it
-   (severed by the backdoor mutilation).  No undirected path joins T to
-   anything, so d-separation is immediate.
-   ===================================================================== *)
+(* Syntactic correctness of a simplified RCT *)
 
 Lemma is_edge_In_edges : forall (e : edge) (V : nodes) (E : edges),
   is_edge e (V, E) = true -> In e E.
@@ -423,11 +411,6 @@ Proof.
   - apply (paths_start_to_end_acyclic u v l G); assumption.
 Qed.
 
-(* MAIN THEOREM.  A simplified RCT is syntactically correct: its post-experiment
-   DAG satisfies the backdoor criterion over the treatment T and response R with
-   the empty adjustment set.  The label hypotheses document the design reading
-   (T is the treatment, R the response); the isolation argument itself does not
-   need them -- randomizing T d-separates it from EVERYTHING. *)
 Theorem simple_rct_syntactically_correct :
   forall (G : aug_graph) (F : @graphfun nat) (S : list individual) (T R : node),
     wf_aug_graph G ->

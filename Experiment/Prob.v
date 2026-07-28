@@ -1,99 +1,136 @@
+(* ===================================================================== *)
+(* Prob.v -- finite probability layer over infotheo (M1b).                *)
+(*                                                                         *)
+(* Decisions this file realizes (see RAE_plan.md "Decision log"):          *)
+(*   D4  probabilities via infotheo's [fdist] over an abstract realType R  *)
+(*   D5  dsep-core's value layer stays nat-valued; finite worlds meet it   *)
+(*       only at the [to_assign] boundary                                  *)
+(*   D6  nodes share one value finType V; no per-node [dom] yet            *)
+(*                                                                         *)
+(* Style boundary: SSReflect / infotheo lives HERE, behind the narrow      *)
+(* interface below; Main.v / Correctness.v stay vanilla Rocq and must not  *)
+(* see fdist / bigop names.                                                *)
+(*                                                                         *)
+(* STATUS: M1b complete -- all definitions and lemmas proved, no admits.   *)
+(* ===================================================================== *)
+
+Set Warnings "-notation-overridden,-deprecated-library-file,-ambiguous-paths".
+From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals.
+From infotheo Require Import fdist.
 From DAGs Require Import Basics_Constr.
 From CausalDiagrams Require Import Assignments.
-From Experiment Require Import Main.
-From Stdlib Require Import Reals.
 
-Import ListNotations.
-Open Scope R_scope.
+Set Implicit Arguments.
+Unset Strict Implicit.
 
-(* A world is a complete assignment where each node gets a value from its domain *)
-Definition world (dom : node_card) (G : graph) : Type :=
-  { A : assignments nat |
-      is_exact_assignment_for A (nodes_in_graph G)
-    /\ forall u val, In (u, val) A -> (val < dom u)%nat }.
+Local Open Scope fdist_scope.
 
-(* Enumerate all assignments where each node gets a value from its domain *)
-Fixpoint enum_assignments (dom : node_card) (V : nodes) : list (assignments nat) :=
-  match V with
-  | [] => [ [] ]
-  | u :: rest =>
-      flat_map (fun res_assignments => map (fun val => (u, val) :: res_assignments) (node_dom dom u))
-               (enum_assignments dom rest)
-  end.
+(* ===================================================================== *)
+(* Part 1: narrow finite-distribution interface over infotheo             *)
+(* --------------------------------------------------------------------- *)
+(* Four wrappers naming the primitives the theorems use, plus the         *)
+(* congruence lemmas.  [R] is implicit and inferred from the distribution *)
+(* argument (or, for [dret]/[dunif], from the expected return type).      *)
+(* ===================================================================== *)
 
+(* note: a distribution "R.-fdist A":finType is a func A->R
+    that assigns each elem a prob and sums to 1 *)
+Definition dret {R : realType} {A : finType} (a : A) : R.-fdist A :=
+  fdist1 a.   (* "dret a" gives a prob 1. used in intervention. *)
 
-Section Examples.
-Local Open Scope nat_scope.
+Definition dmap {R : realType} {A B : finType} (f : A -> B) (P : R.-fdist A)
+  : R.-fdist B := fdistmap f P.   (* "dmap f P" transforms a dist *)
 
-(* Example: graph 1->2->3, dom 1 = {0}, dom 2 = {0,1}, dom 3 = {0,1} *)
-Definition G_ex : graph := ([1;2;3],[(1,2);(2,3)]).
+Definition dbind {R : realType} {A B : finType} (P : R.-fdist A)
+  (k : A -> R.-fdist B) : R.-fdist B := fdistbind P k.  (* "dbind P k"  *)
 
-Definition dom_ex : node_card := fun n =>
-  match n with
-  | 1 => 1
-  | 2 => 2
-  | 3 => 2
-  | _ => 0
-  end.
+Definition dunif {R : realType} {A : finType} {n : nat} (cardA : #|A| = n.+1)
+  : R.-fdist A := fdist_uniform cardA.
 
-Example enum_ex :
-  enum_assignments dom_ex (nodes_in_graph G_ex) =
-  [ [(1,0); (2,0); (3,0)];
-    [(1,0); (2,1); (3,0)];
-    [(1,0); (2,0); (3,1)];
-    [(1,0); (2,1); (3,1)] ].
-Proof. reflexivity. Qed.
+(* --- the two congruence lemmas the RCT lift (M5) rests on --- *)
 
-End Examples.
-
-(* Correctness: enum_assignments produces exactly the valid complete assignments *)
-Theorem enum_assignments_correct (dom : node_card) (G : graph) :
-  forall A : assignments nat,
-  In A (enum_assignments dom (nodes_in_graph G))
-  <->
-  is_exact_assignment_for A (nodes_in_graph G) /\ forall u val, In (u, val) A -> (val < dom u)%nat.
-Proof. Admitted.
-
-Fixpoint map_with_In {A B : Type} (l : list A) (f : forall a, In a l -> B) : list B :=
-  match l as l' return (forall a, In a l' -> B) -> list B with
-  | [] => fun _  => []
-  | h :: t => fun f' =>
-      f' h (in_eq h t) ::
-      map_with_In t (fun a Ha => f' a (in_cons h a t Ha))
-  end f.
-
-Definition enum_worlds (dom : node_card) (G : graph) : list (world dom G) :=
-  let As := enum_assignments dom (nodes_in_graph G) in
-  map_with_In As (fun A HA => exist _ A (proj1 (enum_assignments_correct dom G A) HA)).
-
-
-Theorem enum_worlds_sound (dom : node_card) (G : graph) :
-  forall w, In w (enum_worlds dom G) <->
-  is_exact_assignment_for (proj1_sig w) (nodes_in_graph G)
-  /\ forall u val, In (u, val) (proj1_sig w) -> (val < dom u)%nat.
+(* [dmap] respects pointwise-equal functions: this is how the per-world
+   [randomize_semantic_do] equality lifts to the outcome distribution. *)
+Lemma dmap_eq {R : realType} {A B : finType} (f g : A -> B) (P : R.-fdist A) :
+  f =1 g -> dmap f P = dmap g P.
 Proof.
-    constructor.
-    - intros. exact (proj2_sig w).
-    - admit.
-Admitted.
+move=> Hfg; rewrite /dmap; apply/fdist_ext => b.
+rewrite !fdistmapE; apply: eq_bigl => a.
+by rewrite !inE Hfg.
+Qed.
 
-Definition Rsum (l : list R) : R := fold_right Rplus 0 l.
+(* [dbind] respects a pointwise-equal continuation: used to rewrite the
+   per-value do-branch inside the randomizer mixture. *)
+Lemma dbind_eq {R : realType} {A B : finType} (P : R.-fdist A)
+  (k1 k2 : A -> R.-fdist B) :
+  k1 =1 k2 -> dbind P k1 = dbind P k2.
+Proof.
+move=> Hk; rewrite /dbind; apply/fdist_ext => b.
+rewrite !fdistbindE; apply: eq_bigr => a _.
+by rewrite Hk.
+Qed.
 
-(* An event is a set of worlds, represented as a characteristic function *)
-Definition event (dom : node_card) (G : graph) : Type := world dom G -> bool.
+(* [dmap] composition: fuses two solve stages (e.g. do-surgery then measure). *)
+Lemma dmap_comp {R : realType} {A B C : finType}
+  (g : B -> C) (f : A -> B) (P : R.-fdist A) :
+  dmap g (dmap f P) = dmap (g \o f) P.
+Proof. by rewrite /dmap fdistmap_comp. Qed.
 
-(* Probability of an event: sum pmf over all worlds in the event *)
-Definition prob_event {dom : node_card} {G : graph}
-    (P : (world dom G -> R)) (E : event dom G) : R :=
-  Rsum (map P (filter E (enum_worlds dom G))).
+(* --- helper for the boundary round-trip below --- *)
+(* Looking up node [key i] in an association list whose keys [key j] are
+   INJECTIVE (so no key collisions) returns exactly [i]'s value [val i].
+   dsep-core's [get_assigned_value] takes the first key match; injectivity
+   makes that the right one. *)
+(* [list I], not [seq I]: dsep-core's imports shadow mathcomp's [seq] type
+   with stdlib's [seq : nat -> nat -> list nat] range function.  [list I] is
+   the same type and dodges the clash. *)
+Lemma get_assigned_value_map (I : eqType) (key val : I -> nat)
+  (Hinj : injective key) (l : list I) (i : I) :
+  i \in l ->
+  get_assigned_value [seq (key j, val j) | j <- l] (key i) = Some (val i).
+Proof.
+elim: l => [|j l IH]; first by [].
+rewrite inE => /orP[/eqP -> | Hin].
+- by rewrite /= Nat.eqb_refl.
+- rewrite /=; case E: (key j =? key i).
+  + apply Nat.eqb_eq in E; apply Hinj in E; by rewrite E.
+  + exact: (IH Hin).
+Qed.
 
-(* A probability measure over worlds satisfying non-negativity, normalization, and additivity *)
-Record prob_measure (dom : node_card) (G : graph) : Type := mkProbMeasure {
-  pmf :> world dom G -> R;
-  pmf_nonneg     : forall w : world dom G, 0 <= pmf w;
-  pmf_normalized : Rsum (map pmf (enum_worlds dom G)) = 1;
-  pmf_additive   : forall (E1 E2 : event dom G),
-    (forall w, E1 w = true -> E2 w = false) ->   (* E1 and E2 are disjoint *)
-    prob_event pmf (fun w => E1 w || E2 w) =
-    prob_event pmf E1 + prob_event pmf E2
-}.
+(* ===================================================================== *)
+(* Part 2: the D5 boundary -- finite worlds <-> dsep-core assignments      *)
+(* --------------------------------------------------------------------- *)
+(* A [world] is a complete assignment of a value in the shared finType V   *)
+(* to each node of G.  [to_assign] injects it into dsep-core's nat-valued  *)
+(* [assignments], which is what [find_value] will consume at M4.           *)
+(* ===================================================================== *)
+
+Section Boundary.
+Variable V : finType.        (* shared value finType (D6); e.g. bool *)
+Variable decode : V -> nat.  (* the value's dsep-core nat code *)
+Variable G : graph.
+
+(* G's nodes as a finType; elements carry distinct nat ids via [ssval].
+   The [: finType] ascription keeps canonical-structure resolution working
+   (so [enum Node], [{ffun Node -> _}] see the finType instance). *)
+Definition Node : finType := seq_sub (nodes_in_graph G).
+
+(* a complete V-assignment over the nodes of G *)
+Definition world := {ffun Node -> V}.
+
+(* inject a finite world into dsep-core's nat-valued assignment *)
+Definition to_assign (w : world) : assignments nat :=
+  [seq (ssval i, decode (w i)) | i <- enum Node].
+
+(* round-trip: the boundary faithfully records each node's value.  The
+   nat ids are distinct (ssval is injective), so first-match lookup by
+   [get_assigned_value] returns exactly node i's value. *)
+Lemma to_assign_get (w : world) (i : Node) :
+  get_assigned_value (to_assign w) (ssval i) = Some (decode (w i)).
+Proof.
+rewrite /to_assign.
+apply: get_assigned_value_map; first by move=> a b; exact: val_inj.
+by rewrite mem_enum.
+Qed.
+
+End Boundary.
