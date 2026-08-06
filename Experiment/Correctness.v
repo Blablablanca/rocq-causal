@@ -300,7 +300,7 @@ Qed.
 (* three-node example *)
 
 (* Randomize x (node 1) in G_3, injecting the randomizer draw (1, 1) that
-   shadows x's natural noise, on the individual with U_z = 1: y evaluates to
+   shadows x's natural noise, on the context with U_z = 1: y evaluates to
    1 + 1 = 2 on both the concrete (no surgery) and the do(x = 1) sides. *)
 Example rct_G_3_stratum_1 :
   find_value (dag G_3)
@@ -412,7 +412,7 @@ Proof.
 Qed.
 
 Theorem simple_rct_syntactically_correct :
-  forall (G : aug_graph) (F : @graphfun nat) (S : list individual) (T R : node),
+  forall (G : aug_graph) (F : @graphfun nat) (S : list context) (T R : node),
     wf_aug_graph G ->
     In T (treatment_nodes G) ->             (* T is the treatment node *)
     In R (response_nodes G) ->              (* R is the response node *)

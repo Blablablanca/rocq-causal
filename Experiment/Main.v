@@ -328,16 +328,38 @@ Proof.
 Qed.
 
 (* ===================================================================== *)
+(* Causal model record                                                   *)
+(* ===================================================================== *)
+
+(* A causal model is <G, F>: the aug_graph is the syntax, the graphfun is the semantics (how).
+  Both the abstract program and the experiment program take a [model] as input. *)
+Record model : Type := mk_model {
+  structure : aug_graph;
+  mech      : @graphfun nat;
+}.
+
+Definition wf_model (M : model) : Prop :=
+  wf_aug_graph (structure M) /\
+  dag_fun_compatible (dag (structure M)) (mech M).
+
+Example M_3 : model := mk_model G_3 g_3.
+
+Example wf_M_3 : wf_model M_3.
+Proof. split. exact wf_G_3. exact g_3_compatible. Qed.
+
+(* ===================================================================== *)
 (* Experiment record                                                     *)
 (* ===================================================================== *)
 
-(* an experimental unit is a concrete instantiation of all "unobservables" *)
-Definition individual : Type := assignments nat.
+(* a [context] is one experimental unit: a concrete instantiation of all
+   "unobservables" (the exogenous draw).  Renamed from [context]; the name
+   [world] is now reserved for the ENDOGENOUS outcome (solved node values). *)
+Definition context : Type := assignments nat.
 
 Record experiment : Type := mk_experiment {
   init_graph : aug_graph;
   init_fun   : @graphfun nat;
-  sample     : list individual;
+  sample     : list context;
   ops        : operations;
 }.
 
@@ -361,7 +383,7 @@ Definition unit_state_wf (G0 : graph) (st : unit_state) : Prop :=
 Definition randomize_graphfun (n : node) (g : @graphfun nat) : @graphfun nat :=
   fun w => if w =? n then f_unobs nat else g w.
 
-Definition apply_op (G0 : graph) (U : individual) (st : unit_state) (op : operation)
+Definition apply_op (G0 : graph) (U : context) (st : unit_state) (op : operation)
     : option unit_state :=
   match op with
   | Intervene n v =>
@@ -460,7 +482,7 @@ Proof.
   intros n w [V E]. reflexivity.
 Qed.
 
-Lemma apply_op_preserves_wf : forall (G0 : graph) (U : individual) (st st' : unit_state) (op : operation),
+Lemma apply_op_preserves_wf : forall (G0 : graph) (U : context) (st st' : unit_state) (op : operation),
   unit_state_wf G0 st ->
   apply_op G0 U st op = Some st' ->
   unit_state_wf G0 st'.
@@ -490,7 +512,7 @@ Proof.
     + discriminate Hop.
 Qed.
 
-Fixpoint run_unit (G0 : graph) (U : individual) (st : unit_state) (p : operations)
+Fixpoint run_unit (G0 : graph) (U : context) (st : unit_state) (p : operations)
     : option unit_state :=
   match p with
   | []       => Some st
@@ -501,7 +523,7 @@ Fixpoint run_unit (G0 : graph) (U : individual) (st : unit_state) (p : operation
       end
   end.
 
-Lemma run_unit_preserves_wf : forall (G0 : graph) (U : individual) (p : operations) (st st' : unit_state),
+Lemma run_unit_preserves_wf : forall (G0 : graph) (U : context) (p : operations) (st st' : unit_state),
   unit_state_wf G0 st ->
   run_unit G0 U st p = Some st' ->
   unit_state_wf G0 st'.
@@ -516,7 +538,7 @@ Proof.
     + discriminate Hrun.
 Qed.
 
-Lemma run_unit_app : forall (G0 : graph) (U : individual) (p1 p2 : operations) (st st' : unit_state),
+Lemma run_unit_app : forall (G0 : graph) (U : context) (p1 p2 : operations) (st st' : unit_state),
   run_unit G0 U st (p1 ++ p2) = Some st' <->
   exists st_mid, run_unit G0 U st p1 = Some st_mid /\ run_unit G0 U st_mid p2 = Some st'.
 Proof.
@@ -532,7 +554,7 @@ Proof.
       * intros [st_mid [H1 _]]. discriminate H1.
 Qed.
 
-Lemma measure_total : forall (G0 : graph) (U : individual) (p : operations) (st st' : unit_state),
+Lemma measure_total : forall (G0 : graph) (U : context) (p : operations) (st st' : unit_state),
   run_unit G0 U st p = Some st' ->
   length (log st') =
     length (log st) +
@@ -553,7 +575,7 @@ Proof.
       simpl. lia.
 Qed.
 
-Fixpoint run_all (e : experiment) (us : list individual)
+Fixpoint run_all (e : experiment) (us : list context)
     : option (list (assignments nat)) :=
   match us with
   | [] => Some []
@@ -592,7 +614,7 @@ Definition post_experiment_dag (e : experiment) : graph :=
 (* Simulation invariant: concrete log tracks the abstract measured set   *)
 (* ===================================================================== *)
 
-Lemma apply_op_measured_agree : forall (G0 : graph) (U : individual) (st st1 : unit_state)
+Lemma apply_op_measured_agree : forall (G0 : graph) (U : context) (st st1 : unit_state)
     (a : abs_state) (op : operation),
   map fst (log st) = measured a ->
   apply_op G0 U st op = Some st1 ->
@@ -608,7 +630,7 @@ Proof.
     rewrite map_app. simpl. rewrite Heq. reflexivity.
 Qed.
 
-Lemma measured_agree : forall (G0 : graph) (U : individual) (p : operations)
+Lemma measured_agree : forall (G0 : graph) (U : context) (p : operations)
     (st st' : unit_state) (a : abs_state),
   map fst (log st) = measured a ->
   run_unit G0 U st p = Some st' ->
@@ -726,7 +748,7 @@ Qed.
    the response node [R].  For now we take a single treatment and a single
    response node.  The correctness statement is in [Correctness.v]
    ([simple_rct_syntactically_correct]). *)
-Definition simple_rct (G : aug_graph) (F : @graphfun nat) (S : list individual)
+Definition simple_rct (G : aug_graph) (F : @graphfun nat) (S : list context)
     (T R : node) : experiment :=
   mk_experiment G F S [Randomize T; Measure R].
 
@@ -734,7 +756,7 @@ Definition simple_rct (G : aug_graph) (F : @graphfun nat) (S : list individual)
    incoming edges -- the same surgery as an intervention on [T]; measuring is
    inert on the structural layer. *)
 Lemma post_dag_simple_rct : forall (G : aug_graph) (F : @graphfun nat)
-    (S : list individual) (T R : node),
+    (S : list context) (T R : node),
   post_experiment_dag (simple_rct G F S T R)
   = remove_incoming T (dag G).
 Proof. reflexivity. Qed.

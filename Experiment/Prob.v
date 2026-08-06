@@ -3,7 +3,7 @@
 (*                                                                         *)
 (* Decisions this file realizes (see RAE_plan.md "Decision log"):          *)
 (*   D4  probabilities via infotheo's [fdist] over an abstract realType R  *)
-(*   D5  dsep-core's value layer stays nat-valued; finite worlds meet it   *)
+(*   D5  dsep-core's value layer stays nat-valued; finite contexts meet it   *)
 (*       only at the [to_assign] boundary                                  *)
 (*   D6  nodes share one value finType V; no per-node [dom] yet            *)
 (*                                                                         *)
@@ -39,17 +39,23 @@ Definition dret {R : realType} {A : finType} (a : A) : R.-fdist A :=
   fdist1 a.   (* "dret a" gives a prob 1. used in intervention. *)
 
 Definition dmap {R : realType} {A B : finType} (f : A -> B) (P : R.-fdist A)
-  : R.-fdist B := fdistmap f P.   (* "dmap f P" transforms a dist *)
+  : R.-fdist B := fdistmap f P.   (* "dmap f P" transforms a dist from input set to output set; used in the experiment prog *)
+(* same random variables with a deterministic f applied to them *)
 
 Definition dbind {R : realType} {A B : finType} (P : R.-fdist A)
-  (k : A -> R.-fdist B) : R.-fdist B := fdistbind P k.  (* "dbind P k"  *)
+  (k : A -> R.-fdist B) : R.-fdist B := fdistbind P k.
+(* while f in dmap f P is a deterministic function,
+  k in dbind P k outputs a distribution. *)
+(* build a new mixture random variable. draw a~P, then draw W~k(a):=Σ_a P(a)·k(a) *)
+(* this is for Randomize *)
 
 Definition dunif {R : realType} {A : finType} {n : nat} (cardA : #|A| = n.+1)
-  : R.-fdist A := fdist_uniform cardA.
+  : R.-fdist A := fdist_uniform cardA. (* for defining a unif distr over sample list *)
+
 
 (* --- the two congruence lemmas the RCT lift (M5) rests on --- *)
 
-(* [dmap] respects pointwise-equal functions: this is how the per-world
+(* [dmap] respects pointwise-equal functions: this is how the per-context
    [randomize_semantic_do] equality lifts to the outcome distribution. *)
 Lemma dmap_eq {R : realType} {A B : finType} (f g : A -> B) (P : R.-fdist A) :
   f =1 g -> dmap f P = dmap g P.
@@ -76,7 +82,7 @@ Lemma dmap_comp {R : realType} {A B C : finType}
   dmap g (dmap f P) = dmap (g \o f) P.
 Proof. by rewrite /dmap fdistmap_comp. Qed.
 
-(* --- helper for the boundary round-trip below --- *)
+(* --- helper for the read-after-write lemma below --- *)
 (* Looking up node [key i] in an association list whose keys [key j] are
    INJECTIVE (so no key collisions) returns exactly [i]'s value [val i].
    dsep-core's [get_assigned_value] takes the first key match; injectivity
@@ -98,9 +104,9 @@ rewrite inE => /orP[/eqP -> | Hin].
 Qed.
 
 (* ===================================================================== *)
-(* Part 2: the D5 boundary -- finite worlds <-> dsep-core assignments      *)
+(* Part 2: the D5 boundary -- finite contexts <-> dsep-core assignments      *)
 (* --------------------------------------------------------------------- *)
-(* A [world] is a complete assignment of a value in the shared finType V   *)
+(* A [context] is a complete assignment of a value in the shared finType V   *)
 (* to each node of G.  [to_assign] injects it into dsep-core's nat-valued  *)
 (* [assignments], which is what [find_value] will consume at M4.           *)
 (* ===================================================================== *)
@@ -116,16 +122,17 @@ Variable G : graph.
 Definition Node : finType := seq_sub (nodes_in_graph G).
 
 (* a complete V-assignment over the nodes of G *)
-Definition world := {ffun Node -> V}.
+Definition context := {ffun Node -> V}.
 
-(* inject a finite world into dsep-core's nat-valued assignment *)
-Definition to_assign (w : world) : assignments nat :=
+(* inject a finite context into dsep-core's nat-valued assignment *)
+Definition to_assign (w : context) : assignments nat :=
   [seq (ssval i, decode (w i)) | i <- enum Node].
 
-(* round-trip: the boundary faithfully records each node's value.  The
-   nat ids are distinct (ssval is injective), so first-match lookup by
-   [get_assigned_value] returns exactly node i's value. *)
-Lemma to_assign_get (w : world) (i : Node) :
+(* read-after-write: after [to_assign] writes the context into the
+   assignment, reading node i back with [get_assigned_value] returns
+   exactly the value written.  The nat ids are distinct (ssval is
+   injective), so first-match read returns node i's own value. *)
+Lemma to_assign_get (w : context) (i : Node) :
   get_assigned_value (to_assign w) (ssval i) = Some (decode (w i)).
 Proof.
 rewrite /to_assign.

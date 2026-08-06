@@ -16,9 +16,10 @@ A **correct design** means:
 ## Architecture: two probabilistic programs
 
 the causal model and the experiment are **both
-probabilistic programs**, and the experiment is a **transformer from the
-distribution of the experimental units' innate characteristics to the outcome
-distribution**. Concretely:
+probabilistic programs**.
+- The causal model simulates the abstract impact of the experiment steps on a "population"/concept level. Formally, the causal model is a tuple of <G,F>, aug_dag and graphfun, that denotes a probability distribution over the random variables (TBD: over the unoservable values or the leaf nodes or all nodes in the graph)
+- The experiment program simulates the concrete impact of each step on each experimental units. Formally, while it also takes <G,F>, it starts with a "sampling" process that randomly draw (TBD: how many? concrete number or variable? a number at all?) samples (TBD: context? or only the intrinsic properties that's sample dependent?) from the population distribution. Each experimental step is applied to the units;the changes propagates in the graph through graphfun; we collect the values of the response nodes (measurement log), which is the output of the program (or the empirical distribution).
+- correctness: vaguely (backed up by my "rigorous" stats knowledge), the empirical distribution is a consistent estimator of the "true" distribution - what the causal model outputs.
 
 ### 1. The causal model is one object: `⟨G, F⟩`
 
@@ -41,23 +42,8 @@ Definition wf_model (M : model) : Prop :=
 the parents G declares. It is exactly the "syntax and semantics agree"
 condition, and it is preserved by every operation (a proof obligation per op).
 
-Notes on `wf_model` (discussion 2026-07-23):
-- "Every node has a mech function" needs **no clause**: `graphfun` is total on
-  `node = nat` (same idiom as `label_of`, `node_card`); off-graph junk is inert
-  because `find_value` only consults `mech` at in-graph nodes.
-- The compatibility direction is deliberately `⊆`, not `=`: G may declare an
-  edge F ignores (sound over-approximation); F must never read an undeclared
-  parent (would break Theorem B). Exact edge-relevance (faithfulness) is a
-  semantic assumption, not well-formedness.
-- **`dom` is deferred (D6).** At this stage there is no per-node `dom :
-  node_card`; nodes share a single value **finType** `V` (start with `bool` for
-  binary treatment/response, or a small `'I_k`). Nonempty-domain and
-  range-closure obligations then hold *by typing* — a value is a `V` by
-  construction — so `wf_model` keeps just the two clauses above. Per-node
-  heterogeneous `dom` returns at M7 (vector / richer values), not before.
-
 **Denotation** — the model is a probabilistic program with free exogenous
-variables, i.e. a *kernel*:
+variables, i.e. a *markov kernel* (a func from an input to a distribution over outputs):
 
 ```
 ⟦M⟧ : fdist U  →  fdist world        (world ≅ assignments over a value finType V)
@@ -77,30 +63,36 @@ monadic to keep that door open.
 ```
 ⟦e⟧_M : dist U  →  dist log
 ```
-
+domain lives here, can be a type.
 - **Input** = the population law over innate characteristics (exogenous U).
-  The old `sample : list individual` field is *deleted from the record*: a
-  concrete cohort is just the empirical distribution `uniform {u₁ … uₙ}`
+  The old `sample : list individual` is just the empirical distribution `uniform {u₁ … uₙ}`
+  (each u_i is a world, and this is a multiset)
   supplied as input. Sample-dependence disappears from the semantics; finite-
   sample estimation returns later as a statistics layer on top (i.i.d. draws
   from `⟦e⟧(P_U)`).
 - **The experiment brings its own coins.** Randomizer draws are the
-  experiment's randomness, bound inline by the run semantics — they are *never*
-  written into U. This resolves the previously flagged open decision ("where do
-  per-unit randomizer draws live") and closes the known gap (the draw no longer
-  needs to be pre-injected into the individual).
+  experiment's randomness, drawn *fresh at run time* — never pre-baked into the
+  innate individual. Per D3 (revised, shadow encoding) the draw is written into
+  the randomized node's exogenous slot `U_n`, which `f_n = f_unobs` then reads;
+  because it is a fresh independent draw made during the run, the input law
+  `P_U` still enters pristine and nothing needs pre-injecting into the
+  individual. This resolves the previously flagged open decision ("where do
+  per-unit randomizer draws live") and closes the known gap.
 - **AST**: start with `operations = list operation` (the straight-line
   fragment), later generalize to `Seq`/`If` (+ bounded loops). `If` on measured
   data is what expresses adaptive designs and dynamic treatment regimes
   (Robins' g-formula) — a static list cannot, because the operation's argument
   depends on runtime data.
 
-### 3. The structural layer is a *derived projection*, not a parallel definition
+### 3. The structural (dag) layer is a *derived projection*, not a parallel definition
 
 `α M = structure M`. The abstract transform is the structural component of the
 one model transform, and the soundness statement `α (step op M) = abs_step op
-(α M)` is now provable — under the agreement refactor (below) it holds
-definitionally for the current three ops. Static checks (backdoor etc.) read
+(α M)` is now provable definitionally. (this is a commuting square. Two routes to the same graph:
+- do the real full-model step, then project to the graph;
+- project to the graph first, then do the cheap graph-only step.)
+
+Static checks (backdoor etc.) read
 only `α M`, stay X-free and decidable, and quantify over mechanisms as
 `∀ M, structure M = G → …`.
 
@@ -110,28 +102,18 @@ over-approximation* (join of branch graphs). That is where abstract
 interpretation properly re-enters — as an approximation of the distribution
 transformer, which stays the well-defined object.
 
-### Design lesson, revised
-
-The previous plan argued "G and F need not structurally agree" and kept the two
-sides as independently-defined transforms related only through a (then-unbuilt)
-denotation. That disagreement was an **artifact of the old encoding**, not a
-fact about causal models: with no place to put a fresh randomizer's law, the
-graph side grew a node `r → n` that the mechanism side never read. Under the
-agreement refactor both sides of every op say the same thing, and the DAG-level
-reasoning that motivated the split survives intact as the projection `α`.
-
 ## Decision log
 
 Decisions taken 2026-07-23 (each was a consulted designer's choice):
 
-| # | decision | rejected alternatives | rationale |
-|---|---|---|---|
-| D1 | `Randomize n` = `remove_incoming n` structurally; **no fresh randomizer node**; `r` dropped from the AST | (a) graph literally unchanged — breaks the backdoor check and `simple_rct_syntactically_correct`; (b) fresh node on *both* sides — agreement also holds but the node set grows mid-run, complicating the distribution layer | randomization *is* an intervention whose value is drawn; the coin belongs to the experiment, not the model. Reintroduce an explicit `r → T` node only when modeling **non-compliance / IV** (assignment ≠ treatment received) |
-| D2 | P_U is an **input** (kernel view), not a model field | `model = {G; F; exo}` denoting a closed distribution | matches the transformer definition verbatim; keeps innate vs. experimental randomness cleanly separated; works because (per D1) the node set never changes |
-| D3 | `Randomize` mechanism = **draw v, then intervene** (`fdistbind d_n (fun v => f_n := const v)`); refined by D6 so the coin `d_n` is an *abstract* distribution, not hardcoded uniform | shadowing encoding (`f_n := f_unobs` + inject `(n,v)` into U) | U stays purely innate; structural rule literally shared with `Intervene`; operationally faithful (coin decides, patient receives). `randomize_semantic_do` survives as the proved bridge between the two encodings |
-| D4 | **Import infotheo** (`fdist` over `R`), *not* a homemade layer | homemade `dist = list (A*Q)` (computable, but hand-rolls every lemma + the setoid tax); homemade `list (A*R)` (loses computation *and* has no toolkit) | RCT theorems are symbolic/parametric — nothing to `vm_compute` in the general case, so Q's computation edge is moot; R avoids Q's setoid tax and brings `bigop`/`lra`/CI machinery. **Already installed** (infotheo 0.9.7 / mathcomp 2.5.0 / analysis 1.16.0 on Rocq 9.1.0), so the version risk is gone. Cost is the finType encoding, contained by D5 |
-| D5 | **Keep `nat`-valued mechanisms; encode only at the distribution boundary** | re-type `graphfun`/`find_value` into a finType `V` (forks dsep-core's proved value layer, re-proves `randomize_semantic_do`) | the causal core (incl. `randomize_semantic_do`) is reused *verbatim*; encoding cost concentrated in one bridge file (`world : finType`, `to_assign : world → assignments nat`, round-trip + range lemmas) |
-| D6 | **No `dom` yet: shared value finType `V` + abstract randomizer `d_n`** | thread `dom : node_card` now and make `Randomize` draw `uniform (node_dom dom n)` | `dom`'s two jobs split — *sample space* becomes "pick a finType `V`" (start `bool`); *"coin is uniform"* is a needless specialization. Abstract `d_n` proves a **stronger** theorem (RCT correct for any coin independent of U; uniform is a corollary) and defers per-node `dom` to M7 |
+| # | decision | alternative considered, and why this wins |
+|---|---|---|
+| D1 | The node set should never change. so `Randomize n` = `remove_incoming n` | Randomization *is* an intervention whose value is drawn — the coin belongs to the experiment, not the model. For non-compliance, IV should be already in the graph. In real world, the random variables will always be there, and we can only interact with their relationships. |
+| D2 | P_U is an **input**, not stored inside the model record ⟨G, F⟩ | *Alt:* make P_U a model field (`model = {G; F; exo}`, a closed distribution). Chosen form works because (D1) the node set never changes *during a run*. (Under D3-revised the randomizer coin overwrites `U_n`, so innate and experimental randomness are no longer fully separated *inside* `U` — but `P_U` still enters as an external input, which is what this decision is about.) |
+| D3 | **shadow encoding**: the randomized node reads its own exogenous slot (`f_n := f_unobs`), and that slot `U_n` is set to a fresh independent draw from the coin `d_n`, injected at run time; `d_n` is an *abstract* distribution (D6), not hardcoded uniform | *Alt (was chosen):* draw `v` then force a constant intervention (`f_n := const v`), leaving `U` untouched. Shadow chosen because it (a) matches the mechanism the code already uses (`randomize_graphfun` = `f_unobs`), and (b) fits the "all randomness up front, then one deterministic solve" pushforward denotation `⟦M⟧ = fdistmap solve`. Costs: `U_n` is overwritten by the experimenter's coin (no longer purely innate), and "randomize = `do`" is now a *theorem* (`randomize_semantic_do`), not definitional. Structural rule (`remove_incoming`, D1) is unchanged — `f_unobs` ignores parents either way. |
+| D4 | **Import infotheo** (`fdist` over `R`), *not* a homemade layer | *Alt:* homemade `dist = list (A*Q)` (computable, but hand-rolls every lemma + setoid tax) or `list (A*R)` (loses computation *and* has no toolkit). RCT theorems are symbolic/parametric, so Q's computation edge is moot; R avoids the setoid tax and brings `bigop`/`lra`/CI machinery. Already installed (infotheo 0.9.7 / mathcomp 2.5.0 / analysis 1.16.0 / Rocq 9.1.0); cost is the finType encoding, contained by D5. |
+| D5 | **Keep `nat`-valued mechanisms; encode only at the distribution boundary** | So the probability side wants context as a finType like `{ffun Node -> V}` (with `V` a finite value type, e.g. `bool`), and the causal side wants `assignments nat`. Keeping `nat` reuses the causal core *verbatim*; encoding cost concentrates in one bridge file (`context : finType`, `to_assign : context → assignments nat`, read-after-write + range lemmas). |
+| D6 | **No `dom` yet: shared value finType `V` + abstract randomizer `d_n`** | *Alt:* thread `dom : node_card` now and draw `uniform (node_dom dom n)`. Rejected because `dom`'s two jobs split — sample space becomes "pick a finType `V`" (start `bool`), and "coin is uniform" is a needless specialization. Abstract `d_n` proves a **stronger** theorem (RCT correct for any coin independent of U; uniform is a corollary) and defers per-node `dom` to M7. |
 
 Still open (bring to supervisor):
 - `Measure` when the solve fails (`find_value = None`): prove totality under `wf`
@@ -198,10 +180,11 @@ because distributions are not indexed by the graph:
 ⟦step op M⟧ = do_op ⟦M⟧        (as kernels: equal at every P_U)
 ```
 
-For `Randomize n`: `⟦Randomize n⟧ M = fdistbind d_n (fun v => ⟦do(n=v)⟧ M)` — a
-mixture of interventions over the abstract coin `d_n` (D6). The per-world core is
-**done** (`randomize_semantic_do`); the distributional lift is `fdistmap`/
-`fdistbind` congruence over that per-world equality.
+For `Randomize n` (shadow encoding, D3): `⟦Randomize n⟧` injects a fresh draw
+`v ~ d_n` into the exogenous slot `U_n` and lets `f_n = f_unobs` read it, then
+solves. This *equals* the intervention mixture `fdistbind d_n (fun v => ⟦do(n=v)⟧ M)`
+— that equality is exactly `randomize_semantic_do` (**done**), and the
+distributional lift is `fdistmap`/`fdistbind` congruence over it.
 
 **B. Soundness of the abstraction** (why static verification is valid):
 d-separation on `α M'` implies the target independence / identification in
@@ -243,12 +226,10 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
 Proposed order (dates are suggestions — adjust with supervisor):
 
 - **M0** ✅ 2026-07-23 — agreement refactor (D1): no fresh node, RCT theorem reproved.
-- **M1a** ✅ 2026-07-23 — **infotheo encoding spike** done (throwaway; lived in
-  scratchpad, not committed). Result: **every integration risk cleared on the
-  first compile.** infotheo's SSReflect `fdist` world and dsep-core's vanilla
+- **M1a** ✅ 2026-07-23 — **infotheo encoding spike**: infotheo's SSReflect `fdist` world and dsep-core's vanilla
   `find_value` coexist in one file; a uniform `fdist world` pushed through
   `fdistmap (outcome ∘ to_assign)` yields a genuine `R.-fdist 'I_2` (proved
-  `\sum_x od x = 1` via `FDist.f1`); the round-trip lemma held by `reflexivity`.
+  `\sum_x od x = 1` via `FDist.f1`); the read-after-write lemma held by `reflexivity`.
   No import-order fighting, no `realType_ext` workaround, no path flags needed
   (infotheo is in `user-contrib`, auto-loaded; `coq-infotheo` already in
   `rocq-causal.opam`). **Reusable incantations for M1b:**
@@ -264,32 +245,15 @@ Proposed order (dates are suggestions — adjust with supervisor):
   Proof. by rewrite card_ffun card_bool card_ord. Qed.
   Definition unif : R.-fdist world := fdist_uniform world_card.
   ```
-  **Glue findings (honest):**
-  - *Scopes*: `fdist_scope` + `ring_scope` both needed; standard, ~0 cost.
-  - *Warnings*: infotheo triggers `notation-overridden`/`deprecated-library`
-    noise — silence per-file with `Set Warnings "-notation-overridden,-deprecated-library-file".`
-    at the top of `Prob.v` (NOT globally in `_CoqProject`, which would mask
-    dsep-core issues). `all_ssreflect` is deprecated in mathcomp 2.5 → migrate
-    to `all_boot`/`all_order` eventually; cosmetic.
-  - *Real cost confirmed*: the spike faked the finType codomain with
-    `inord (odflt 0 (find_value …))` — a clamp papering over `option nat`. Real
-    code needs **M2 first** (find_value totality, drop `option`) plus an honest
-    `nat → V` decode at the boundary. This validates the M2-before-denotation
-    ordering.
-  - *Per-lemma estimate for M1b*: the boundary encoding (`world`, `to_assign`,
-    2–3 round-trip lemmas) is **small and low-risk** (the hard one was
-    `reflexivity`); the `fdist` wrappers are one-liners over existing lemmas.
-    M1b is ~1 week, front-loaded risk now retired.
-- **M1b** ✅ 2026-07-23 — **`Prob.v` rewritten over infotheo**, no admits.
+
+- **M1b** ✅ 2026-07-23 — **`Prob.v` rewritten over infotheo**.
   Deleted the old `world`/`enum_worlds`/`prob_measure` layer and both its
   `Admitted`s. Delivered:
   - *Narrow interface* — wrappers `dret`/`dmap`/`dbind`/`dunif` (implicit `R`),
     and the congruence lemmas `dmap_eq` (`f =1 g -> dmap f P = dmap g P`) and
-    `dbind_eq` (pointwise continuation), proved via `fdist_ext` +
-    `fdistmapE`/`fdistbindE` + `eq_bigl`/`eq_bigr`; plus `dmap_comp` from
-    `fdistmap_comp`. These are exactly the lemmas the M5 RCT lift consumes.
+    `dbind_eq` (pointwise continuation).
   - *D5 boundary* — `Node := seq_sub (nodes_in_graph G)` (nodes as a finType),
-    `world := {ffun Node -> V}`, `to_assign`, and the round-trip `to_assign_get`
+    `world := {ffun Node -> V}`, `to_assign`, and the read-after-write `to_assign_get`
     (`get_assigned_value (to_assign w) (ssval i) = Some (decode (w i))`), proved
     with a generic key-injective lookup helper + `val_inj` + `mem_enum`.
   - *Gotchas logged for M4+*: (1) `Node` needs a `: finType` ascription or
@@ -382,7 +346,7 @@ The d-separations a DAG entails, checked against data to falsify the model; reus
 - Layout:
   - `Experiment/Main.v` — labels, `aug_graph`, operations, (soon) `model` + one transform per op, backdoor pair.
   - `Experiment/Prob.v` — rewritten over infotheo (M1b): the boundary encoding
-    (`world` finType, `to_assign`, round-trip lemmas) + narrow `fdist` wrappers;
+    (`world` finType, `to_assign`, read-after-write lemmas) + narrow `fdist` wrappers;
     then the denotation.
   - `Experiment/Correctness.v` — per-world core (`randomize_semantic_do`), RCT syntactic correctness; later Theorems A and B.
   - `examples/` — encodings of historical/natural experiments (future).
