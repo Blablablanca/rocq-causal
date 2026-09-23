@@ -352,7 +352,7 @@ Proof. split. exact wf_G_3. exact g_3_compatible. Qed.
 (* ===================================================================== *)
 
 (* a [context] is one experimental unit: a concrete instantiation of all
-   "unobservables" (the exogenous draw).  Renamed from [context]; the name
+   "unobservables" (the exogenous draw). The name
    [world] is now reserved for the ENDOGENOUS outcome (solved node values). *)
 Definition context : Type := assignments nat.
 

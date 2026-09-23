@@ -1,4 +1,3 @@
-8/5
 - 2 programs: abstract and experiment. Both take `model : <G,F>` as an input and have `dag_fun_compatible` for well-formedness.
 - abstract input:
     - a model;
@@ -16,3 +15,7 @@
 
 - probability specific
     - each node's domain can have it's own finType
+    - however, since `assignment` and the graph solver only work with `nat`, we build an `encoder` (that turns the fintype to a nat) and a `decoder` (turns nat back to the fintype). So `F` lives in `nat`, while probability lives in various `finType`
+    - node itself is also nat which is not finite, so we define Node:finType := seq_sub (nodes_in_graph G).
+    - context := {dffun forall n : Node, dom n}.
+    - using infotheo's fdist so that every node can have a distribution, and formally define a distribution over context.
