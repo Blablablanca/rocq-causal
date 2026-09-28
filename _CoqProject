@@ -41,4 +41,5 @@ dsep-core/Semantics/ChangeOrigUnbAnc.v
 dsep-core/Semantics/SemanticDSepEquiv.v
 Experiment/Main.v
 Experiment/Prob.v
+Experiment/TypedExp.v
 Experiment/Correctness.v

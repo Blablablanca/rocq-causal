@@ -4,7 +4,10 @@ From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals.
 From infotheo Require Import fdist.
 From Stdlib Require Import Lia.
 From Stdlib Require Import FunctionalExtensionality.
-From DAGs Require Import Basics_Constr Descendants.
+From DAGs Require Import Basics_Constr Descendants CycleDetection.
+(* Require-only: Utils defines its own [index], which would shadow
+   mathcomp's [seq.index] used in [elab]. *)
+From Utils Require List_Basics.
 From CausalDiagrams Require Import Assignments.
 From Semantics Require Import FunctionRepresentation FindValue EquateValues.
 From Experiment Require Main.
@@ -84,6 +87,19 @@ Definition bdec (b : bool) : {b} + {~~ b} :=
 Lemma size_length (T : Type) (s : list T) : size s = length s.
 Proof. by elim: s => //= x s ->. Qed.
 
+(* dsep-core speaks Stdlib's [In]/[member]; mathcomp speaks [\in].  Two
+   more bridges, used to hand [Node]'s membership proof to dsep-core. *)
+Lemma mem_In (T : eqType) (x : T) (l : list T) : x \in l -> List.In x l.
+Proof.
+by elim: l => [|a l IH] //=; rewrite inE => /orP[/eqP->|/IH H]; [left|right].
+Qed.
+
+Lemma In_mem (T : eqType) (x : T) (l : list T) : List.In x l -> x \in l.
+Proof.
+elim: l => [|a l IH] //= [->|H]; first by rewrite inE eqxx.
+by rewrite inE IH ?orbT.
+Qed.
+
   (* dom n <-> assignments nat   *)
 
 Section Boundary.
@@ -114,6 +130,13 @@ Hypothesis encK : forall n : Node, cancel (enc n) (dec n).
    available. *)
 Definition context := {dffun forall n : Node, dom n}.
 
+(* the other half of the vocabulary: a WORLD is the endogenous outcome,
+   every node's SOLVED value.  Under the Part 3 simplifying assumption
+   (noise space = value space) it has the same shape as [context]; the
+   two names are kept apart because they mean different things, and they
+   would genuinely diverge if noise domains were ever split off. *)
+Definition world := {dffun forall n : Node, dom n}.
+
 (* raw nat id -> Node, transparently (None iff the id is not in G) *)
 Definition o_node (p : nat) : option Node :=
   match bdec (p \in nodes_in_graph G) with
@@ -142,6 +165,28 @@ Proof.
 rewrite /to_assign.
 apply: get_assigned_value_map; first by move=> a b; exact: val_inj.
 by rewrite mem_enum.
+Qed.
+
+(* a [Node] is a node of G, in dsep-core's boolean form *)
+Lemma node_in_graph_ssval (n : Node) : node_in_graph (ssval n) G = true.
+Proof.
+case: n => u Hu /=; move: Hu.
+rewrite /node_in_graph /nodes_in_graph; case: G => V E /= Hu.
+by apply/List_Basics.member_In_equiv; apply: mem_In.
+Qed.
+
+(* COMPLETENESS: a typed context assigns every node of G, so it is a
+   legitimate exogenous input [U] for [find_value]/[Main.eval].  This is
+   what makes the solver total on typed contexts -- see
+   [find_value_to_assign] below. *)
+Lemma to_assign_complete (w : context) :
+  is_assignment_for (to_assign w) (nodes_in_graph G) = true.
+Proof.
+rewrite /is_assignment_for; apply/forallb_forall => u Hu.
+have Hu' : u \in nodes_in_graph G by apply: In_mem.
+apply/assigned_is_true.
+by exists (enc (@SeqSub _ _ u Hu') (w (@SeqSub _ _ u Hu')));
+   exact: (to_assign_get w (@SeqSub _ _ u Hu')).
 Qed.
 
 (* ===================================================================== *)
@@ -238,6 +283,34 @@ apply: Main.nth_default_agree.
 apply: Hag; apply/ltP.
 rewrite Hval -size_length index_mem.
 by move: Hp; rewrite /is_parent Hval.
+Qed.
+
+(* --- solving: from one context to one world -------------------------- *)
+
+(* node n's value in the world the context w determines.  [Main.eval] is
+   dsep-core's total solver; [dec] brings its nat answer back into n's
+   own domain.  Deterministic in w: this is the whole point of the
+   vocabulary split -- randomness is in w and nowhere else. *)
+Definition solve (tF : tgraphfun) (w : context) (n : Node) : dom n :=
+  dec n (Main.eval G (elab tF) (ssval n) (to_assign w)).
+
+(* the whole world a context gives rise to *)
+Definition world_of (tF : tgraphfun) (w : context) : world :=
+  [ffun n => solve tF w n].
+
+(* [Main.eval]'s [0] default is dead on typed contexts: under
+   well-formedness and acyclicity the solver really does return a value
+   for every node, because [to_assign_complete] supplies a COMPLETE
+   exogenous assignment.  So [solve] names an actual solution rather
+   than a fallback. *)
+Lemma find_value_to_assign (tF : tgraphfun) (w : context) (n : Node) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  find_value G (elab tF) (ssval n) (to_assign w) nil
+  = Some (Main.eval G (elab tF) (ssval n) (to_assign w)).
+Proof.
+move=> Hwf Hcyc; apply: Main.eval_find_value => //.
+- exact: to_assign_complete.
+- exact: node_in_graph_ssval.
 Qed.
 
 End Boundary.
@@ -344,8 +417,9 @@ Definition dec_3 (n : Node G3) (m : nat) : dom_3 n :=
 Example enc_3K : forall n : Node G3, cancel (@enc_3 n) (@dec_3 n).
 Proof. by move=> [[|[|[|v]]] pf] x; case: x. Qed.
 
-(* the nodes the mechanisms below read, named once *)
+(* G3's nodes, named once: X treatment, Y response, Z confounder *)
 Definition x3 : Node G3 := @SeqSub _ (nodes_in_graph G3) 1 isT.
+Definition y3 : Node G3 := @SeqSub _ (nodes_in_graph G3) 2 isT.
 Definition z3 : Node G3 := @SeqSub _ (nodes_in_graph G3) 3 isT.
 
 (* the typed mechanisms.  Parents are read BY NODE: [pa z3 isT] is Z's
@@ -538,6 +612,75 @@ Qed.
 
 End ContextDist.
 
+(* ===================================================================== *)
+(* Part 6: the induced law -- distributions over worlds                  *)
+(* --------------------------------------------------------------------- *)
+(* Part 5 stops at the exogenous law P(U).  The distribution causal       *)
+(* queries actually range over is the law of the SOLVED node values --    *)
+(* the world -- and because the mechanisms are deterministic once the     *)
+(* context is fixed, that law is a PUSHFORWARD and nothing more:          *)
+(*                                                                        *)
+(*     fdist_world = dmap world_of (fdist_context P)                      *)
+(*                                                                        *)
+(* [world_of] is the deterministic solve (Part 3), [fdist_context P] is   *)
+(* the product law over unobservables (Part 5).  No new randomness is     *)
+(* introduced here, and none can be: this is Main.v's M4 wrapping M2's    *)
+(* total solve in [fdistmap], exactly as its header anticipates.          *)
+(*                                                                        *)
+(* [fdist_world_marginal] is the lemma that makes the object usable: the  *)
+(* law of a single node's VALUE is the world law read at that node, which *)
+(* is the same as pushing [solve ^~ n] forward directly.  Note how this   *)
+(* differs from [fdist_context_marginal] in Part 5: that one recovers a   *)
+(* node's NOISE law and is true by construction, whereas this one has to  *)
+(* run the mechanisms.  Only at a source node do the two coincide.        *)
+(*                                                                        *)
+(* CAVEAT (unfinished business).  [fdist_world] is total and always       *)
+(* well defined, but it is only MEANINGFUL under well-formedness and      *)
+(* acyclicity -- see [find_value_to_assign], which is where those         *)
+(* hypotheses discharge [Main.eval]'s default.  And nothing here yet      *)
+(* connects [elab tF] running under [find_value] back to what [tF] means  *)
+(* on typed values: that is the elaboration-correctness lemma flagged in  *)
+(* Part 3, and it needs range-closure of [enc], not just [encK].  Until   *)
+(* it exists, [solve] is "whatever dsep-core computes, decoded", not      *)
+(* provably "what the typed mechanism says".                              *)
+(* ===================================================================== *)
+
+Section WorldDist.
+Import GRing.Theory.
+Local Open Scope ring_scope.
+Variable G : graph.
+Variable dom : Node G -> finType.
+Variable enc : forall n : Node G, dom n -> nat.
+Variable dec : forall n : Node G, nat -> dom n.
+Variable tF : tgraphfun dom.
+Variable R : realType.
+
+(* the exogenous law: one law per node's unobservable (Part 5) *)
+Variable P : forall n : Node G, R.-fdist (dom n).
+
+(* THE INDUCED LAW over endogenous outcomes *)
+Definition fdist_world : R.-fdist (world dom) :=
+  dmap (world_of enc dec tF) (fdist_context P).
+
+(* a world's probability is the total exogenous mass of the contexts
+   that solve to it *)
+Lemma fdist_worldE v :
+  fdist_world v
+  = \sum_(w in context dom | world_of enc dec tF w == v) fdist_context P w.
+Proof. by rewrite /fdist_world /dmap fdistmapE. Qed.
+
+(* the per-node outcome law: reading node n out of the world law is the
+   same as pushing n's solved value forward directly *)
+Lemma fdist_world_marginal (n : Node G) :
+  dmap (fun v : world dom => v n) fdist_world
+  = dmap (fun w : context dom => solve enc dec tF w n) (fdist_context P).
+Proof.
+rewrite /fdist_world dmap_comp; apply: dmap_eq => w.
+by rewrite /= /world_of ffunE.
+Qed.
+
+End WorldDist.
+
 (* --- Part 4 revisited: per-node NOISE laws for the drug trial --------- *)
 (* Z is a source node, so it takes its unobservable as its value and the  *)
 (* age draw IS Z's noise law -- the simplifying assumption of Part 3 at   *)
@@ -581,29 +724,28 @@ Example P3_ctx_marginal_z :
   dmap (fun w : context dom_3 => w z3) P3_ctx = dunif card_age.
 Proof. exact: (fdist_context_marginal P_3 z3). Qed.
 
+(* --- and the law it induces over worlds (Part 6) --- *)
+
+(* the drug trial's outcome distribution: the age draw pushed through the
+   confounded assignment and the response table *)
+Definition W3 : R.-fdist (world dom_3) := fdist_world enc_3 dec_3 tF_3 P_3.
+
+(* the law of Y's VALUE -- what the trial is actually about *)
+Example W3_marginal_y :
+  dmap (fun v : world dom_3 => v y3) W3
+  = dmap (fun w : context dom_3 => solve enc_3 dec_3 tF_3 w y3) P3_ctx.
+Proof. exact: fdist_world_marginal. Qed.
+
 End G3_laws.
 
-(* ===================================================================== *)
-(* NEXT: from the exogenous law to the law over WORLDS                   *)
-(* --------------------------------------------------------------------- *)
-(* Everything above stops at the context law P(U).  The distribution the *)
-(* causal queries actually range over is the law of the SOLVED node       *)
-(* values -- the world -- which is a pushforward, because the mechanisms  *)
-(* are deterministic once the context is fixed:                           *)
-(*                                                                        *)
-(*   P(world) = dmap (fun w => eval G (elab tF) n (to_assign w))          *)
-(*                   (fdist_context P)                                    *)
-(*                                                                        *)
-(* Every ingredient already exists: [Main.eval] is the total option-free  *)
-(* solver (dead [0] default under well-formedness), [to_assign] is the    *)
-(* typed-context -> [assignments nat] bridge, and [fdist_context] is P(U).*)
-(* Main.v's M2 note already names this as the "solve" that the            *)
-(* distribution semantics (M4) wraps in [fdistmap].                       *)
-(*                                                                        *)
-(* Once that exists, an intervention is: replace one mechanism, push the  *)
-(* SAME context law through -- which is what makes do-calculus statements *)
-(* expressible.  The missing prerequisite is the elaboration-correctness  *)
-(* lemma flagged in Part 3: nothing yet connects [elab tF] running under  *)
-(* [find_value] to what [tF] means on typed values ([encK] is assumed but *)
-(* never cashed in).                                                      *)
-(* ===================================================================== *)
+(* G3 really is solvable, so [W3] is not built on [Main.eval]'s default:
+   for every context and every node the solver returns an actual value.
+   (Well-formedness and acyclicity come from Main.v's [wf_G_3].) *)
+Example G3_solved (tF : tgraphfun dom_3) (w : context dom_3) (n : Node G3) :
+  find_value G3 (elab enc_3 dec_3 tF) (ssval n) (to_assign enc_3 w) nil
+  = Some (Main.eval G3 (elab enc_3 dec_3 tF) (ssval n) (to_assign enc_3 w)).
+Proof.
+have [Hwf [Hcyc _]] := Main.wf_G_3.
+by apply: find_value_to_assign.
+Qed.
+

@@ -113,12 +113,39 @@ Decisions taken 2026-07-23 (each was a consulted designer's choice):
 | D3 | **shadow encoding**: the randomized node reads its own exogenous slot (`f_n := f_unobs`), and that slot `U_n` is set to a fresh independent draw from the coin `d_n`, injected at run time; `d_n` is an *abstract* distribution (D6), not hardcoded uniform | *Alt (was chosen):* draw `v` then force a constant intervention (`f_n := const v`), leaving `U` untouched. Shadow chosen because it (a) matches the mechanism the code already uses (`randomize_graphfun` = `f_unobs`), and (b) fits the "all randomness up front, then one deterministic solve" pushforward denotation `⟦M⟧ = fdistmap solve`. Costs: `U_n` is overwritten by the experimenter's coin (no longer purely innate), and "randomize = `do`" is now a *theorem* (`randomize_semantic_do`), not definitional. Structural rule (`remove_incoming`, D1) is unchanged — `f_unobs` ignores parents either way. |
 | D4 | **Import infotheo** (`fdist` over `R`), *not* a homemade layer | *Alt:* homemade `dist = list (A*Q)` (computable, but hand-rolls every lemma + setoid tax) or `list (A*R)` (loses computation *and* has no toolkit). RCT theorems are symbolic/parametric, so Q's computation edge is moot; R avoids the setoid tax and brings `bigop`/`lra`/CI machinery. Already installed (infotheo 0.9.7 / mathcomp 2.5.0 / analysis 1.16.0 / Rocq 9.1.0); cost is the finType encoding, contained by D5. |
 | D5 | **Keep `nat`-valued mechanisms; encode only at the distribution boundary** | So the probability side wants context as a finType like `{ffun Node -> V}` (with `V` a finite value type, e.g. `bool`), and the causal side wants `assignments nat`. Keeping `nat` reuses the causal core *verbatim*; encoding cost concentrates in one bridge file (`context : finType`, `to_assign : context → assignments nat`, read-after-write + range lemmas). |
-| D6 | **No `dom` yet: shared value finType `V` + abstract randomizer `d_n`** | *Alt:* thread `dom : node_card` now and draw `uniform (node_dom dom n)`. Rejected because `dom`'s two jobs split — sample space becomes "pick a finType `V`" (start `bool`), and "coin is uniform" is a needless specialization. Abstract `d_n` proves a **stronger** theorem (RCT correct for any coin independent of U; uniform is a corollary) and defers per-node `dom` to M7. |
+| D6 | **No `dom` yet: shared value finType `V` + abstract randomizer `d_n`** | *Alt:* thread `dom : node_card` now and draw `uniform (node_dom dom n)`. Rejected because `dom`'s two jobs split — sample space becomes "pick a finType `V`" (start `bool`), and "coin is uniform" is a needless specialization. Abstract `d_n` proves a **stronger** theorem (RCT correct for any coin independent of U; uniform is a corollary) and defers per-node `dom` to M7. **Superseded by D8** — per-node `dom` landed early, in `Prob.v`. |
+
+Decisions taken 2026-09-23:
+
+| # | decision | alternative considered, and why this wins |
+|---|---|---|
+| D7 | **Sampling is an operation (`Filter`), not a record field.** `sample` deleted from `experiment`; units are an argument to `run_all`/`concrete_logs` | *Alt:* keep `sample : list raw_context` and read it as the empirical distribution. Rejected: an experiment is a *protocol*, and which units take part is decided *by* the protocol (inclusion criteria). Making it an op also buys conditioning as a first-class construct — selection bias becomes expressible, and `conditioned` is the `Z` the existing d-separation machinery already wants. Cost: the distributional semantics acquires a genuine side condition (conditioning on a probability-zero event), not dischargeable by well-formedness. |
+| D8 | **Parents are addressed BY NODE, never by position** (`parent_view` in `Prob.v`) | *Alt (was in place):* a positional right-nested tuple `hvals (find_parents n G)`. Rejected because `find_parents` returns parents in **edge-list order**, so re-spelling the same dag silently changed what a mechanism meant, and the typechecker only caught it when the parents' domains happened to differ. Keyed access makes reordering a no-op rather than an error (verified against a reordered `G3`), and makes "reads only declared parents" structural instead of proved. Deleting the positional layer removed `hvals`/`dec_parents`/`dom_of`/`dec_of` and three lemmas. |
+| D9 | **`context` = the exogenous draw; `world` = the solved node values**, one meaning each across the development | `Main.v`'s untyped version renamed `raw_context` (nat-coded, what `find_value` takes as `U`); `Prob.v` keeps `context` for the typed one, bridged by `to_assign`. They had not collided only because `Prob.v` does `Require Main` *without* `Import`. A third copy in `Spike.v` was retired to `attic/`. |
+| D10 | **Noise space = value space** (`dom n` serves both), documented as a simplifying assumption rather than left implicit | Natural because a *source* node takes its unobservable as its value, so the spaces must coincide there anyway. Known cost: forbids `|U_n| ≠ |dom n|`, so principal strata (a 4-valued compliance type behind a binary outcome) is out of reach until noise domains get their own family and codes. |
+| D12 | **A typed operation SURFACE that compiles down** (`toperation` + `elab_op` in `TypedExp.v`), not a retyped `Main.operation` | *Alt 1:* retype `operation` to carry `Node G`/`dom n`. Rejected on three counts: mathcomp would enter `Main.v` against the stated style boundary; the type must be graph-indexed, and after surgery `Node (remove_incoming n G)` is **not convertible** with `Node G` for abstract `G` (`nodes_in_graph (remove_incoming n G)` reduces to `fst G`, `nodes_in_graph G` is stuck), so the abstract layer would thread transports; and every proved theorem over operations needs rework. *Alt 2:* leave operations untyped — keeps `Intervene 1 1` and value-range errors as proof obligations. Compiling down mirrors `tgraphfun`/`elab` exactly, costs one elaboration tax already paid elsewhere, and makes **half of `wf_operation` structural**: a `Node G` cannot name a node outside `G`, so only the label obligations remain. |
+| D11 | **`Filter` = read set + rule** (`Filter (ns : nodes) (keep : assignments nat -> bool)`) | *Alt 1:* `Filter n v` (equality on one node) — too weak for inclusion criteria over several covariates. *Alt 2:* `Filter (raw_context -> bool)` — maximally general but hides which nodes are read, so `conditioned` could not be computed and selection bias would be invisible to the static checks. Splitting keeps Z syntactically visible while the rule stays arbitrary. `keep` gets an `assignments nat`, i.e. keyed access, consistent with D8. Cost: `operation` is no longer first-order (no decidable equality) — currently unused, so free. |
+
+**Universal Assumption 2 is now conditional.** "All exogenous variables are
+mutually independent" holds of the **initial** law. `Filter` conditions on an
+event about *solved* values, which pulls back to a non-product event on
+contexts — so after a filter the unobservables are in general **dependent**.
+That is not a bug, it *is* selection bias. Consequence for M4c: the running
+state of the distributional semantics must be a general `R.-fdist context`,
+not a per-node family `forall n, R.-fdist (dom n)`; the product form is the
+initial value only.
 
 Still open (bring to supervisor):
-- `Measure` when the solve fails (`find_value = None`): prove totality under `wf`
-  and drop the `option` (preferred — avoids stacking `fdist` on `option`), or
-  carry option values in the log. **M2.**
+- **Elaboration correctness**: nothing yet connects `elab tF` running under
+  `find_value` back to what `tF` *means* on typed values. Needs **range closure**
+  of `enc` (`enc (dec m) = m` for in-range `m`), which `encK` does not give.
+  Until then `solve` is "whatever dsep-core computes, decoded".
+- **Zero-probability conditioning**: `Filter` denotes conditioning, which needs
+  positive mass. Unlike the `Measure`-on-`None` partiality this is *not*
+  eliminable by well-formedness — it depends on the numbers. Side condition, or
+  a partial distributional semantics?
+- Nothing downstream of `to_assign` computes by `reflexivity` (`enum Node` does
+  not reduce), so per-node value laws can be *stated* but not *evaluated*.
 - **Identifiability positivity**: Theorem B needs the coin `d_n` to have full
   support on `V` (overlap), and needs independence of confounders. Both hold for
   the RCT by construction; state them as explicit hypotheses on `d_n`.
@@ -152,12 +179,26 @@ Inductive node_label : Type :=
 Inductive operation : Type :=
   | Intervene (n : node) (v : nat)   (* do(n=v): set n to a specific value *)
   | Randomize (n : node)             (* n's value is drawn by the experimenter's coin *)
-  | Measure   (n : node).            (* record n's current value into the log *)
+  | Measure   (n : node)             (* record n's current value into the log *)
+  | Filter    (ns : nodes) (keep : assignments nat -> bool).
 ```
 
-- Minimal set {intervene, randomize, measure}; one abstract `Measure` is deliberate.
+- Set {intervene, randomize, measure, filter} spans *doing*, *seeing* and
+  *selecting*; one abstract `Measure` is deliberate.
 - `Randomize` carries **no fresh randomizer node** (D1).
-- `Control` still excluded (lacks a clear characterization). Planned: `Control`, `Stratify`, `Timestep`, then `Seq`/`If`.
+- `Filter` is **conditioning** (D7): inclusion criteria, stratification,
+  loss-to-follow-up. It replaces the old `sample` field — selecting the study
+  population is an operation, not a record field. It is also the only
+  *population-level* op (the others transform a unit, `Filter` drops it).
+- `Filter` splits its **read set** `ns` from its **rule** `keep` (D11). The
+  read set must stay syntactically visible because it is the conditioning
+  set `Z` the static checks consume; a bare `raw_context -> bool` would hide
+  it and make selection bias invisible to them. `keep` is handed an
+  `assignments nat` covering exactly `ns`, so it reads **by node**, not by
+  position, and cannot read what it was not given. `Filter_eq n v` is the
+  common "keep units whose n reads v" case.
+- `Control` still excluded (lacks a clear characterization). Planned:
+  `Control`, `Timestep`, then `Seq`/`If`.
 
 ### Transformation rules (one transform, two projections)
 
@@ -166,10 +207,33 @@ Inductive operation : Type :=
 | `Intervene n v` | remove incoming edges to `n` | `f_n := const v` | — |
 | `Randomize n` | remove incoming edges to `n` | draw `v ~ d_n` (abstract coin, D6), then `f_n := const v` (D3) | — |
 | `Measure n` | — | — | append `n`'s current value to the log |
+| `Filter ns keep` | add `ns` to `conditioned` | — | drops the unit unless `keep` admits its values at `ns` |
 
 `Intervene` and `Randomize` are structurally identical; they differ only in
-where n's value comes from. `Measure` is the only op that changes nothing on
-either projection yet is the only one that produces data.
+where n's value comes from. `Measure` changes nothing on either projection yet
+is the only op producing data. `Filter` changes no edge either, but unlike
+`Measure` it **changes what the graph implies**: conditioning on a collider or
+its descendant opens a path, which is how selection bias reaches the static
+checks. `conditioned` is exactly the `Z` of a d-separation query.
+
+### Ordering discipline: `measures_last`
+
+`wf_operations` has a second clause, `measures_last prog = true`: **no surgery
+after a measurement**. The abstract layer has no temporal resolution —
+`abs_apply_op` leaves the graph alone on `Measure`, and `abs_run` ends at the
+post-surgery dag, so `measured` is read against the *final* graph. A program
+measuring a node both before and after surgery would have two concrete values
+but only one abstract law.
+
+**Open, and known to be the wrong shape.** `Filter` also reads values, so a
+filter placed before surgery has the same ambiguity — yet `screen, then
+randomize` is the standard RCT protocol and must stay legal. So the clause
+cannot simply be extended to `Filter`. The correct condition is finer and
+**descendant-based**: a node read by an observation must not be a descendant
+of any node surgered later. `no_descendant_of_b` (already in `Main.v`) is the
+check, and testing against the *initial* graph is sound because surgery only
+removes edges. That refinement would subsume `measures_last` and permit
+screen-then-randomize. **Decide before M4c.**
 
 ## Two correctness theorems
 
@@ -220,6 +284,25 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   `rct_*`) deleted — recoverable from git if the IV work revives them.
 - `measured_agree` — the log's node footprint equals the abstract `measured`
   set; simulation infrastructure, unchanged.
+- **Typed mechanism boundary** (`Prob.v`, 2026-09-19..23) — per-node domains
+  `dom : Node G -> finType`, typed mechanisms `tnodefun`, and `elab` compiling
+  them into dsep-core's `nat` graphfun unchanged. `elab_compatible` is now
+  structural (D8). Worked example: the 3-node drug trial with three categorical
+  domains of different cardinality.
+- **Exogenous law** (`Prob.v` Part 5) — `fdist_context P = \prod_n P n (w n)`,
+  the product over unobservables (Universal Assumption 2), with
+  `fdist_context_marginal` recovering each node's own noise law. Needed a
+  dependent distributivity lemma (`bigA_distr_big_dffun`) since infotheo ships
+  only the homogeneous product.
+- **Induced law over worlds** (`Prob.v` Part 6) — `fdist_world = dmap world_of
+  (fdist_context P)`, with `fdist_world_marginal` for per-node outcome laws,
+  and `to_assign_complete` / `find_value_to_assign` proving a typed context is
+  a *complete* exogenous assignment, so `eval`'s default is dead and `solve`
+  names a real solution. Axioms: only boolp's three, already in the base.
+- **Total + selecting per-unit runners** (`Main.v`, 2026-09-23) —
+  `run_unit_total` with `run_unit_total_correct` (agrees with the partial
+  `run_unit` under wf), which frees the `option` for `run_unit_sel`, where
+  `None` means *filtered out* rather than *failed*.
 
 ## Milestones
 
@@ -277,10 +360,27 @@ Proposed order (dates are suggestions — adjust with supervisor):
   free by typing into `V`, per D6); one transform per op on `model`; projection
   `α`; agreement lemma `α (step op M) = abs_step op (α M)`; ops preserve
   `wf_model` (in particular `dag_fun_compatible`).
-- **M4** (≈ 2 wks) — **distribution semantics**: `run : model → operations →
-  state → fdist state` (coins `d_n` bound inline via `fdistbind`, per D3/D6);
-  `⟦e⟧ : fdist U → fdist log`; `sample` removed from `experiment`, empirical
-  distribution as input; denotation `⟦M⟧` as `fdistmap` along the solve.
+- **M4a** ✅ 2026-09-23 — **denotation of a model**: `fdist_context` (exogenous
+  product law) and `fdist_world = dmap world_of (fdist_context P)` in `Prob.v`,
+  with the completeness lemmas that make the solve total on typed contexts.
+- **M4b** ✅ 2026-09-23 — **experiment-language groundwork**: `raw_context`
+  rename (D9), `sample` dropped (D7), `Filter` op + `conditioned` field,
+  `measures_last` clause on `wf_operations`, total and selecting per-unit
+  runners. `Spike.v` retired to `attic/`.
+- **M4b′** ✅ 2026-09-23 — **typed experiment surface** (`TypedExp.v`, D12):
+  `toperation` with values in their own domain, `elab_op`/`elab_ops`
+  compiling to `Main.operation`; `twf_operation` carrying only the label
+  obligations (membership is structural); `measures_last_elab` transferring
+  the ordering discipline; `texperiment`/`elab_exp` with `elab_exp_wf`,
+  whose `dag_fun_compatible` clause is discharged by `elab_compatible`.
+  Worked typed RCT on G3 elaborating to `[Randomize 1; Measure 2]` by
+  `reflexivity`, and `TIntervene x3 cured` rejected as a type error.
+- **M4c** (next) — **distribution semantics of a program**: the distributional
+  layer attaches to `abs_state`, not to logs (the log is the *concrete*
+  output). `Randomize n` is surgery on the exogenous law (substitute the coin
+  `d_n` at `U_n`); `Intervene` is surgery on the mechanism; `Filter`
+  conditions. Output: the post-experiment world law marginalised to
+  `measured`, conditioned on `conditioned`.
 - **M5** (≈ 2 wks) — **Theorem A**: Randomize (lift `randomize_semantic_do` by
   `fdistmap`/`fdistbind` congruence over the mixture `d_n`), then Intervene
   (near-definitional), then Measure.
@@ -344,12 +444,21 @@ The d-separations a DAG entails, checked against data to falsify the model; reus
   the `vsrocq` opam switch. Add `coq-infotheo` to `rocq-causal.opam` and its
   logical paths to `_CoqProject`/Makefile at M1a.
 - Layout:
-  - `Experiment/Main.v` — labels, `aug_graph`, operations, (soon) `model` + one transform per op, backdoor pair.
-  - `Experiment/Prob.v` — rewritten over infotheo (M1b): the boundary encoding
-    (`world` finType, `to_assign`, read-after-write lemmas) + narrow `fdist` wrappers;
-    then the denotation.
+  - `Experiment/Main.v` — labels, `aug_graph`, operations (incl. `Filter`),
+    concrete + abstract semantics, total/selecting runners, backdoor pair;
+    (soon) `model` + one transform per op.
+  - `Experiment/Prob.v` — the typed boundary (`Node`, `dom`, `context`,
+    `world`, `to_assign`, `elab`) + narrow `fdist` wrappers, then the
+    denotation: `fdist_context` (Part 5) and `fdist_world` (Part 6).
+  - `Experiment/TypedExp.v` — the typed experiment surface (D12):
+    `toperation`/`elab_op`, `texperiment`/`elab_exp`, and the transfer
+    lemmas (`elab_op_wf`, `measures_last_elab`, `elab_exp_wf`).
   - `Experiment/Correctness.v` — per-world core (`randomize_semantic_do`), RCT syntactic correctness; later Theorems A and B.
+  - `attic/` — retired prototypes, not in `_CoqProject` (`Spike.v`).
   - `examples/` — encodings of historical/natural experiments (future).
+- **Vocabulary (D9)**: `context` = exogenous draw (typed, `Prob.v`);
+  `raw_context` = its nat-coded form (`Main.v`, what `find_value` takes as
+  `U`); `world` = solved node values. One meaning each, everywhere.
 - **Style boundary**: SSReflect/infotheo lives *inside* `Prob.v` behind the
   narrow interface; the causal proofs stay vanilla Rocq. Don't let `fdist`/bigop
   names leak into `Main.v`/`Correctness.v`.

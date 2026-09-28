@@ -412,13 +412,13 @@ Proof.
 Qed.
 
 Theorem simple_rct_syntactically_correct :
-  forall (G : aug_graph) (F : @graphfun nat) (S : list context) (T R : node),
+  forall (G : aug_graph) (F : @graphfun nat) (T R : node),
     wf_aug_graph G ->
     In T (treatment_nodes G) ->             (* T is the treatment node *)
     In R (response_nodes G) ->              (* R is the response node *)
-    syntactic_backdoor (post_experiment_dag (simple_rct G F S T R)) T R [] = true.
+    syntactic_backdoor (post_experiment_dag (simple_rct G F T R)) T R [] = true.
 Proof.
-  intros G F S T R Hwf HT HR.
+  intros G F T R Hwf HT HR.
   destruct Hwf as [HGwf [HGcyc _]].
   (* the post-experiment DAG is the intervention surgery on T *)
   rewrite post_dag_simple_rct.
