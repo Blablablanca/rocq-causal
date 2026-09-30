@@ -131,43 +131,25 @@ Qed.
 (* Values are nat codes in 0 .. dom n - 1 (Universal Assumption 4); the range
    check [v < dom n] is a value-space condition and now lives with the
    denotation layer, not in the structural [wf_operation] below. *)
-(* The four operations span the two things an experimenter can do to a
-   causal model -- act on it and look at it:
+(* The three operations span what an experimenter can do to a causal model
+   -- act on it and look at it:
 
-     Intervene / Randomize   DOING      (surgery: n is cut from its parents)
-     Measure                 SEEING     (record n's current value)
-     Filter                  SELECTING  (keep the units a rule admits)
+     Intervene / Randomize   DOING     (surgery: n is cut from its parents)
+     Measure                 SEEING    (record n's current value)
 
-   [Filter] is conditioning: it decides which units are in the study, so it
-   is where inclusion criteria, stratification and loss-to-follow-up live.
-   It is also the one operation that acts on the POPULATION rather than on
-   a unit -- the others transform a unit, [Filter] drops it -- which is why
-   the concrete runner reports it through an [option] (see [run_unit_sel]). *)
+   A third mode, SELECTING (deciding which units are in the study: inclusion
+   criteria, stratification, loss to follow-up), is deliberately absent for
+   now.  It is conditioning rather than surgery, so it would be the only
+   operation acting on the POPULATION rather than on a unit, and the only
+   one that changes the distribution by renormalising.  See the deferred
+   entry in RAE_plan.md for the design as far as it was worked out. *)
 Inductive operation : Type :=
   | Intervene (n : node) (v : nat)   (* do(n=v): set n to a specific value *)
   | Randomize (n : node)             (* RCT: n's value is drawn by the experimenter's coin *)
-  | Measure   (n : node)             (* record n's current value into the log *)
-  | Filter    (ns : nodes) (keep : assignments nat -> bool).
-      (* keep only the units whose values at [ns] satisfy [keep] *)
+  | Measure   (n : node).            (* record n's current value into the log *)
 
 
 Definition operations : Type := list operation.
-
-(* [Filter] carries its READ SET [ns] separately from the rule [keep], for
-   the same reason parent access is keyed in [Prob.v] (D8): the abstract
-   layer must know WHICH nodes a filter reads, because those nodes are the
-   conditioning set Z of a d-separation query.  A bare [raw_context -> bool]
-   would hide that and make selection bias invisible to the static checks.
-
-   [keep] receives an [assignments nat] holding exactly the nodes of [ns],
-   so it looks values up BY NODE rather than by position, and it cannot read
-   anything it was not given. *)
-Definition reads_value (a : assignments nat) (n v : nat) : bool :=
-  match get_assigned_value a n with Some x => x =? v | None => false end.
-
-(* the common special case: keep the units whose n currently reads v *)
-Definition Filter_eq (n v : nat) : operation :=
-  Filter [n] (fun a => reads_value a n v).
 
 Definition wf_operation (ag : aug_graph) (op : operation) : Prop :=
   match op with
@@ -177,11 +159,6 @@ Definition wf_operation (ag : aug_graph) (op : operation) : Prop :=
       node_in_graph n (dag ag) = true
   | Measure n =>
       node_in_graph n (dag ag) = true /\ label_of ag n <> Unmeasurable
-  | Filter ns keep =>
-      (* selecting on a node means reading it, so every node in the read set
-         carries the same obligation [Measure] does *)
-      Forall (fun n => node_in_graph n (dag ag) = true
-                       /\ label_of ag n <> Unmeasurable) ns
   end.
 
 (* --- ordering discipline: no surgery after a measurement --------------- *)
@@ -193,8 +170,12 @@ Definition wf_operation (ag : aug_graph) (op : operation) : Prop :=
    a node both before and after surgery would therefore have two concrete
    values but only one abstract law.  Requiring measurements to come after
    all surgery rules that out, and keeps the two layers in agreement.
-   [Filter] is inert here: it drops units, it does not change any unit's
-   values, so measuring around it is unambiguous. *)
+
+   This is SOUND but crude: measuring a node that no later surgery can
+   affect is harmless, so a descendant-based condition
+   ([no_descendant_of_b] below) would be strictly more permissive.  That
+   refinement is not needed while [Measure] is the only operation that
+   reads, and [simple_rct] satisfies the crude clause as written. *)
 Definition is_surgery (op : operation) : bool :=
   match op with Intervene _ _ | Randomize _ => true | _ => false end.
 
@@ -222,10 +203,9 @@ Example measures_last_rejects_remeasure :
   measures_last [Measure 2; Intervene 1 0; Measure 2] = false.
 Proof. reflexivity. Qed.
 
-(* filtering between measurements is allowed: it drops units, it does not
-   change any surviving unit's values *)
-Example measures_last_allows_filter :
-  measures_last [Measure 2; Filter_eq 3 1; Measure 2] = true.
+(* measuring twice with no surgery between is fine *)
+Example measures_last_allows_remeasure :
+  measures_last [Measure 2; Measure 3] = true.
 Proof. reflexivity. Qed.
 
 (* ===================================================================== *)
@@ -441,9 +421,9 @@ Definition raw_context : Type := assignments nat.
 
 (* An EXPERIMENT is a protocol, not a protocol-plus-population: the units
    it runs on are an argument to the runner ([run_all]), not a field.
-   Deciding which units take part is itself an operation ([Filter]), so a
-   fixed [sample] field would both duplicate that and leave the record
-   unable to express inclusion criteria. *)
+   A fixed [sample] field would conflate the protocol with the population
+   it happens to be run on, and would make the same protocol over a
+   different cohort a different [experiment]. *)
 Record experiment : Type := mk_experiment {
   init_graph : aug_graph;
   init_fun   : @graphfun nat;
@@ -482,12 +462,6 @@ Definition apply_op (G0 : graph) (U : raw_context) (st : unit_state) (op : opera
       | Some v => Some (mk_unit_state (cur_fun st) (log st ++ [(n, v)]))
       | None   => None
       end
-  | Filter _ _ =>
-      (* inert here.  [apply_op]'s [option] means "the solve failed", so it
-         cannot also mean "this unit was filtered out" without conflating
-         the two.  Selection is carried by [run_unit_sel] below, whose
-         [option] is total in the error sense and means exactly "dropped". *)
-      Some st
   end.
 
 (* --------------------------------------------------------------------- *)
@@ -503,16 +477,8 @@ Definition apply_op (G0 : graph) (U : raw_context) (st : unit_state) (op : opera
    out: the only op that changes nothing on either state, yet the only one
    that produces data. *)
 Record abs_state : Type := mk_abs_state {
-  abs_graph   : aug_graph;
-  measured    : nodes;
-  conditioned : nodes;   (* the nodes [Filter] selected on: the Z of a
-                            d-separation query.  Like [measured] this is a
-                            footprint, not surgery -- filtering changes no
-                            edge -- but unlike [measured] it CHANGES WHAT
-                            THE GRAPH IMPLIES: conditioning on a collider
-                            or its descendant opens a path, which is how
-                            selection bias becomes visible to the static
-                            checks. *)
+  abs_graph : aug_graph;
+  measured  : nodes;
 }.
 
 Definition abs_apply_op (st : abs_state) (op : operation) : abs_state :=
@@ -522,17 +488,15 @@ Definition abs_apply_op (st : abs_state) (op : operation) : abs_state :=
         (mk_aug_graph
           (remove_incoming n (dag (abs_graph st)))
           (label_of (abs_graph st)))
-        (measured st) (conditioned st)
+        (measured st)
   | Randomize n =>
       mk_abs_state
         (mk_aug_graph
           (remove_incoming n (dag (abs_graph st)))
           (label_of (abs_graph st)))
-        (measured st) (conditioned st)
+        (measured st)
   | Measure n =>
-      mk_abs_state (abs_graph st) (measured st ++ [n]) (conditioned st)
-  | Filter ns _ =>
-      mk_abs_state (abs_graph st) (measured st) (conditioned st ++ ns)
+      mk_abs_state (abs_graph st) (measured st ++ [n])
   end.
 
 (* ---- Helper lemmas: how find_parents/node_in_graph interact with surgery ---- *)
@@ -591,7 +555,7 @@ Lemma apply_op_preserves_wf : forall (G0 : graph) (U : raw_context) (st st' : un
   unit_state_wf G0 st'.
 Proof.
   intros G0 U st st' op Hwf Hop.
-  destruct op as [n v | n | n | ns keep]; simpl in Hop.
+  destruct op as [n v | n | n]; simpl in Hop.
   - (* Intervene n v *)
     inversion Hop; subst; clear Hop.
     unfold unit_state_wf, dag_fun_compatible in *. cbn [cur_fun log].
@@ -613,8 +577,6 @@ Proof.
     + inversion Hop; subst; clear Hop.
       unfold unit_state_wf in *. simpl. apply Hwf.
     + discriminate Hop.
-  - (* Filter n v: inert on the mechanism *)
-    inversion Hop; subst; clear Hop. exact Hwf.
 Qed.
 
 Fixpoint run_unit (G0 : graph) (U : raw_context) (st : unit_state) (p : operations)
@@ -671,14 +633,13 @@ Proof.
   - simpl in Hrun.
     destruct (apply_op G0 U st op) as [st1|] eqn:Hop; [| discriminate Hrun].
     specialize (IH st1 st' Hrun).
-    destruct op as [n v | n | n | ns keep]; simpl in Hop.
+    destruct op as [n v | n | n]; simpl in Hop.
     + inversion Hop; subst. simpl in IH. simpl. lia.
     + inversion Hop; subst. simpl in IH. simpl. lia.
     + destruct (find_value G0 (cur_fun st) n U []) as [v|] eqn:Hfv; [| discriminate Hop].
       inversion Hop; subst. simpl in IH.
       rewrite length_app in IH. simpl in IH.
       simpl. lia.
-    + inversion Hop; subst. simpl in IH. simpl. lia.
 Qed.
 
 Fixpoint run_all (e : experiment) (us : list raw_context)
@@ -711,8 +672,8 @@ Definition concrete_logs (e : experiment) (us : list raw_context)
 (* well-formedness (M2), so the total versions below just use it, and      *)
 (* [run_unit_total_correct] proves the two agree -- which frees the        *)
 (* [option] to carry the one thing that is genuinely partial about running *)
-(* a unit: whether a [Filter] DROPPED it.  That is [run_unit_sel], whose   *)
-(* [None] means "not in the study", never "something went wrong".          *)
+(* a unit.  Nothing in the current operation set is genuinely partial, so  *)
+(* the total version is the one the distribution layer will use.           *)
 (* ===================================================================== *)
 
 Definition apply_op_total (G0 : graph) (U : raw_context) (st : unit_state)
@@ -722,7 +683,6 @@ Definition apply_op_total (G0 : graph) (U : raw_context) (st : unit_state)
   | Randomize n   => mk_unit_state (randomize_graphfun n (cur_fun st)) (log st)
   | Measure n     => mk_unit_state (cur_fun st)
                                    (log st ++ [(n, eval G0 (cur_fun st) n U)])
-  | Filter _ _    => st
   end.
 
 Fixpoint run_unit_total (G0 : graph) (U : raw_context) (st : unit_state)
@@ -741,7 +701,7 @@ Lemma apply_op_total_correct : forall (ag : aug_graph) (U : raw_context)
   apply_op (dag ag) U st op = Some (apply_op_total (dag ag) U st op).
 Proof.
   intros ag U st op Hwf Hcyc HU Hop.
-  destruct op as [n v | n | n | ns keep]; simpl; try reflexivity.
+  destruct op as [n v | n | n]; simpl; try reflexivity.
   (* Measure: the solve is defined, so the [eval] default is not taken *)
   destruct Hop as [Hin _].
   rewrite (eval_find_value (dag ag) (cur_fun st) n U Hwf Hcyc HU Hin).
@@ -764,49 +724,6 @@ Proof.
     apply IH; assumption.
 Qed.
 
-(* --- selection: [None] means "this unit was filtered out" -------------- *)
-
-(* solve the nodes of [ns] under the current mechanism and present them to a
-   filter's rule as an assignment -- keyed by node, so [keep] cannot depend
-   on the order [ns] happens to be written in *)
-Definition read_nodes (G0 : graph) (U : raw_context) (g : @graphfun nat)
-    (ns : nodes) : assignments nat :=
-  map (fun n => (n, eval G0 g n U)) ns.
-
-Fixpoint run_unit_sel (G0 : graph) (U : raw_context) (st : unit_state)
-    (p : operations) : option unit_state :=
-  match p with
-  | []       => Some st
-  | Filter ns keep :: p' =>
-      if keep (read_nodes G0 U (cur_fun st) ns)
-      then run_unit_sel G0 U st p'
-      else None                       (* dropped: the rest of the protocol
-                                         is not run on this unit *)
-  | op :: p' => run_unit_sel G0 U (apply_op_total G0 U st op) p'
-  end.
-
-(* a filter-free protocol never drops anyone, and then selection and the
-   plain total run coincide *)
-Fixpoint has_filter (p : operations) : bool :=
-  match p with
-  | []               => false
-  | Filter _ _ :: _  => true
-  | _ :: p'          => has_filter p'
-  end.
-
-Lemma run_unit_sel_no_filter : forall (G0 : graph) (U : raw_context)
-    (p : operations) (st : unit_state),
-  has_filter p = false ->
-  run_unit_sel G0 U st p = Some (run_unit_total G0 U st p).
-Proof.
-  intros G0 U p.
-  induction p as [| op p' IH]; intros st Hf.
-  - reflexivity.
-  - destruct op as [n v | n | n | ns keep]; simpl in Hf |- *;
-      try (apply IH; exact Hf).
-    discriminate Hf.
-Qed.
-
 (* ===================================================================== *)
 (* Abstract (graph-surgical) semantics                                   *)
 (* ===================================================================== *)
@@ -818,7 +735,7 @@ Fixpoint abs_run (st : abs_state) (p : operations) : abs_state :=
   end.
 
 Definition abs_init (e : experiment) : abs_state :=
-  mk_abs_state (init_graph e) [] [].
+  mk_abs_state (init_graph e) [].
 
 Definition post_experiment_dag (e : experiment) : graph :=
   dag (abs_graph (abs_run (abs_init e) (ops e))).
@@ -834,15 +751,13 @@ Lemma apply_op_measured_agree : forall (G0 : graph) (U : raw_context) (st st1 : 
   map fst (log st1) = measured (abs_apply_op a op).
 Proof.
   intros G0 U st st1 a op Heq Hop.
-  destruct op as [n v | n | n | ns keep]; simpl in Hop.
+  destruct op as [n v | n | n]; simpl in Hop.
   - inversion Hop; subst. simpl. exact Heq.
   - inversion Hop; subst. simpl. exact Heq.
   - destruct (find_value G0 (cur_fun st) n U []) as [v0|] eqn:Hfv; [| discriminate Hop].
     inversion Hop; subst. simpl.
     unfold assignment in *.
     rewrite map_app. simpl. rewrite Heq. reflexivity.
-  - (* Filter: inert on both the log and the measured footprint *)
-    inversion Hop; subst. simpl. exact Heq.
 Qed.
 
 Lemma measured_agree : forall (G0 : graph) (U : raw_context) (p : operations)

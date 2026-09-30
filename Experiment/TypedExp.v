@@ -1,7 +1,9 @@
 Set Warnings "-notation-overridden,-deprecated-library-file,-ambiguous-paths".
 From HB Require Import structures.
-From mathcomp Require Import all_ssreflect.
-From DAGs Require Import Basics_Constr Descendants.
+From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals matrix.
+From mathcomp Require boolp.
+From infotheo Require Import ssr_ext ssralg_ext fdist proba.
+From DAGs Require Import Basics_Constr Descendants CycleDetection.
 From CausalDiagrams Require Import Assignments.
 From Semantics Require Import FunctionRepresentation FindValue.
 From Experiment Require Main.
@@ -9,6 +11,8 @@ From Experiment Require Import Prob.
 
 Set Implicit Arguments.
 Unset Strict Implicit.
+
+Local Open Scope fdist_scope.
 
 (* ===================================================================== *)
 (* Typed experiment surface                                              *)
@@ -49,36 +53,18 @@ Variable enc : forall n : Node G, dom n -> nat.
 Variable dec : forall n : Node G, nat -> dom n.
 Set Implicit Arguments.
 
-(* A typed operation.  [TFilter] carries its read set [ns] separately from
-   its rule [keep] for the reason [Main.Filter] does: the read set is the
-   conditioning set Z the static checks consume, so it must stay visible.
-   [keep] receives a view that answers only for nodes of [ns] -- the same
-   ticket discipline as [Prob.parent_view], so a rule cannot read what it
-   was not given, and cannot depend on the order [ns] was written in. *)
+(* A typed operation: the same three the untyped layer has, with node ids
+   replaced by [Node G] and intervention values by elements of [dom n]. *)
 Inductive toperation : Type :=
   | TIntervene (n : Node G) (v : dom n)
   | TRandomize (n : Node G)
-  | TMeasure   (n : Node G)
-  | TFilter    (ns : list (Node G))
-               (keep : (forall n : Node G, n \in ns -> dom n) -> bool).
-
-(* the typed view handed to a filter's rule: look each node of the read set
-   up BY ID in the nat-valued assignment, then decode into its own domain *)
-Definition decode_at (ns : list (Node G)) (a : assignments nat)
-    : forall n : Node G, n \in ns -> dom n :=
-  fun n _ =>
-    dec n (match get_assigned_value a (ssval n) with
-           | Some x => x
-           | None   => 0
-           end).
+  | TMeasure   (n : Node G).
 
 Definition elab_op (op : toperation) : Main.operation :=
   match op with
   | TIntervene n v  => Main.Intervene (ssval n) (enc n v)
   | TRandomize n    => Main.Randomize (ssval n)
   | TMeasure n      => Main.Measure   (ssval n)
-  | TFilter ns keep => Main.Filter (map (fun n => ssval n) ns)
-                                   (fun a => keep (@decode_at ns a))
   end.
 
 Definition elab_ops (p : list toperation) : Main.operations :=
@@ -96,8 +82,6 @@ Definition twf_operation (ag : Main.aug_graph) (op : toperation) : Prop :=
   | TIntervene _ _ => True
   | TRandomize _   => True
   | TMeasure n     => Main.label_of ag (ssval n) <> Main.Unmeasurable
-  | TFilter ns _   =>
-      List.Forall (fun n => Main.label_of ag (ssval n) <> Main.Unmeasurable) ns
   end.
 
 Lemma elab_op_wf (ag : Main.aug_graph) (op : toperation) :
@@ -109,13 +93,6 @@ move=> Hag; case: op => /=.
 - by move=> n v _; rewrite Hag; exact: node_in_graph_ssval.
 - by move=> n _; rewrite Hag; exact: node_in_graph_ssval.
 - by move=> n Hl; split; [rewrite Hag; exact: node_in_graph_ssval|].
-- (* [keep] is irrelevant to well-formedness -- and its type mentions [ns],
-     so it has to go before [ns] can be generalised *)
-  move=> ns _ /=; elim: ns => [|n ns IH] /=; first by move=> _; constructor.
-  move=> Hl; constructor.
-  + by split; [rewrite Hag; exact: node_in_graph_ssval
-              | exact: (List.Forall_inv Hl)].
-  + by apply: IH; exact: (List.Forall_inv_tail Hl).
 Qed.
 
 Lemma elab_ops_wf (ag : Main.aug_graph) (p : list toperation) :
@@ -220,7 +197,7 @@ Definition trct_3 : list (toperation dom_3) :=
   @TRandomize G3 dom_3 x3 :: @TMeasure G3 dom_3 y3 :: nil.
 
 Example trct_3_elaborates :
-  elab_ops enc_3 dec_3 trct_3
+  elab_ops enc_3 trct_3
   = (Main.Randomize 1 :: Main.Measure 2 :: nil)%N.
 Proof. reflexivity. Qed.
 
@@ -231,25 +208,130 @@ Proof. reflexivity. Qed.
 (* a typed intervention: the value is a [treatment], not a code.  [drug]
    encodes to 1, but the author never writes the 1. *)
 Example tintervene_elaborates :
-  elab_op enc_3 dec_3 (@TIntervene G3 dom_3 x3 drug) = Main.Intervene 1 1.
+  elab_op enc_3 (@TIntervene G3 dom_3 x3 drug) = Main.Intervene 1 1.
 Proof. reflexivity. Qed.
 
 (* and the point of the exercise: [TIntervene x3 cured] does not typecheck,
    because [cured : outcome] is not in [dom_3 x3 = treatment].  Under
    [Main.Intervene 1 3] the same mistake is a well-typed nat. *)
 Fail Example tintervene_ill_typed :
-  elab_op enc_3 dec_3 (@TIntervene G3 dom_3 x3 cured) = Main.Intervene 1 3.
+  elab_op enc_3 (@TIntervene G3 dom_3 x3 cured) = Main.Intervene 1 3.
 
-(* a typed filter: keep the units whose confounder reads [old].  The rule
-   reads Z by name out of the view it is given. *)
-Definition tfilter_old : toperation dom_3 :=
-  @TFilter G3 dom_3 (z3 :: nil) (fun v => v z3 (mem_head _ _) == old).
+(* ===================================================================== *)
+(* The experiment's outcome law                                          *)
+(* --------------------------------------------------------------------- *)
+(* The concrete semantics runs a protocol on ONE unit and produces a log. *)
+(* The population is not a field of the experiment (D7), so the law over  *)
+(* outcomes is the pushforward of the exogenous law along that run --     *)
+(* the same move [fdist_world] makes for a model, one level up.           *)
+(*                                                                        *)
+(* [log_val e w n] reads node n's entry out of the log produced by        *)
+(* running [e] on the unit [w], decoded into n's own domain.  It lands in *)
+(* a finType, which a whole log does not (a log is a list), so this is    *)
+(* what can carry a distribution today.  A general log law needs a finite *)
+(* log type indexed by the [Measure] positions -- deferred until a        *)
+(* protocol measures more than one node.                                  *)
+(* ===================================================================== *)
 
-Example tfilter_reads_z :
-  elab_op enc_3 dec_3 tfilter_old
-  = Main.Filter (3 :: nil)%N
-      (fun a => dec_3 z3 (match get_assigned_value a 3 with
-                          | Some x => x
-                          | None => 0
-                          end) == old).
-Proof. reflexivity. Qed.
+Section ExperimentLaw.
+Variable G : graph.
+
+Unset Implicit Arguments.
+Variable dom : Node G -> finType.
+Variable enc : forall n : Node G, dom n -> nat.
+Variable dec : forall n : Node G, nat -> dom n.
+Set Implicit Arguments.
+Hypothesis encK : forall n : Node G, cancel (enc n) (dec n).
+
+Variable R : realType.
+Variable P : forall n : Node G, R.-fdist (dom n).
+
+(* node n's logged value after running [e] on the unit [w] *)
+Definition log_val (e : Main.experiment) (w : context dom) (n : Node G) : dom n :=
+  dec n (odflt 0
+    (get_assigned_value
+       (Main.log (Main.run_unit_total (Main.dag (Main.init_graph e))
+                    (to_assign enc w)
+                    (Main.mk_unit_state (Main.init_fun e) nil)
+                    (Main.ops e)))
+       (ssval n))).
+
+(* the law of that value across the population *)
+Definition fdist_log_val (e : Main.experiment) (n : Node G) : R.-fdist (dom n) :=
+  dmap (fun w : context dom => log_val e w n) (fdist_context P).
+
+(* a protocol that only measures n logs exactly n's solved value *)
+Lemma log_val_measure (te : texperiment dom) (w : context dom) (n : Node G) :
+  te_ops te = @TMeasure G dom n :: nil ->
+  log_val (elab_exp enc dec te) w n = solve enc dec (te_mech te) w n.
+Proof.
+move=> Hops; rewrite /log_val /elab_exp /elab_ops Hops /= Nat.eqb_refl /=.
+by rewrite /solve.
+Qed.
+
+(* HELLO WORLD.  Run a protocol that measures one parentless node whose
+   mechanism echoes its own noise.  The law of what gets logged is exactly
+   the law that node was given: what you put in is what you get out.
+
+   This is the end-to-end smoke test of the whole stack -- enc/dec,
+   to_assign, find_value, eval, solve, run_unit_total, fdist_context --
+   and it is an EXACT equality of laws, not a limit statement. *)
+Theorem measure_source_law (te : texperiment dom) (n : Node G) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  fdist_log_val (elab_exp enc dec te) n = P n.
+Proof.
+move=> Hwf Hcyc Hnp Hops Hecho.
+have Hs : forall w0 : context dom, solve enc dec (te_mech te) w0 n = w0 n.
+  by move=> w0; apply: solve_source.
+rewrite /fdist_log_val.
+transitivity (dmap (fun w : context dom => w n) (fdist_context P));
+  last exact: fdist_context_marginal.
+apply: dmap_eq => w.
+by rewrite (log_val_measure w Hops) Hs.
+Qed.
+
+(* ===================================================================== *)
+(* The concrete log over a sample vs the abstract law                    *)
+(* --------------------------------------------------------------------- *)
+(* [measure_source_law] is about the population law.  An experimenter     *)
+(* sees a finite sample, so here is the finite-sample counterpart: run    *)
+(* the protocol on every unit of [us], tabulate the logged values, and    *)
+(* you get back the abstract law -- PROVIDED the sample is representative *)
+(* ([emp us = fdist_context P]).  That hypothesis is the honest form of   *)
+(* "exhaustive": it says the sample already carries the right law, and it *)
+(* is stated rather than assumed away.                                    *)
+(*                                                                        *)
+(* The work is done by [Prob.emp_map]: tabulating and then pushing        *)
+(* through the protocol is the same as running the protocol on every unit *)
+(* and then tabulating.  Everything is finite -- no limits anywhere.      *)
+(* ===================================================================== *)
+
+Theorem measure_source_empirical (te : texperiment dom) (n : Node G)
+    (N : nat) (us : list (context dom))
+    (Hus : size us = N.+1)
+    (Hlog : size (map (fun w => log_val (elab_exp enc dec te) w n) us) = N.+1) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  emp Hus = fdist_context P ->
+  emp Hlog = P n.
+Proof.
+move=> Hwf Hcyc Hnp Hops Hecho Hrep.
+rewrite (emp_map Hus Hlog) Hrep.
+exact: measure_source_law.
+Qed.
+
+(* NEXT: the law of large numbers for this.  [Prob.sum_iidE] (the generic
+   n-iid-copies sum, which infotheo only instantiates for one specific
+   random variable) plus infotheo's [wlln] give a quantitative Chebyshev
+   bound on the empirical frequency.  Blocked only on wiring the outcome
+   indicator into [Ex]: [Ex] ranges over an [lmodType], and the [{RV P -> R}]
+   phantom does not unify there without help. *)
+
+End ExperimentLaw.
