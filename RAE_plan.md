@@ -265,27 +265,35 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
 
 ## Status: done and surviving
 
-- **`measure_source_law`** (`TypedExp.v`, 2026-09-30) — the hello-world, at
-  the EXPERIMENT level: run a protocol that measures one parentless node
-  whose mechanism echoes its own noise, and the law of the logged value is
-  exactly that node's exogenous law. Exercises the whole stack
+- **`measure_source_law`** (`TypedExp.v`, 2026-09-30; generalised
+  2026-10-03) — the hello-world, at the EXPERIMENT level: run a protocol
+  that measures one parentless node whose mechanism reads only its own
+  noise (`tF n u pa = g u`, **any** `g`, not just the identity), and the
+  law of the logged value is exactly the pushforward `dmap g (P n)`.
+  `measure_source_law_echo` is the `g = id` corollary, recovering
+  `= P n`. Exercises the whole stack
   (enc/dec → to_assign → find_value → eval → solve → run_unit_total →
   fdist_context). Axioms: boolp's three only.
 - **`solve_source`** (`Prob.v`) — the **first proved instance of elaboration
-  correctness**: a parentless node whose mechanism echoes its noise solves
-  to the drawn value. It works because the value round-trips
-  `enc → dec → enc → dec`, so every step is `encK`; it never needs
-  `enc (dec m) = m`, the range-closure property that blocks the general
-  lemma. Plus `o_node_self` (`o_node` retracts `ssval`).
+  correctness**: a parentless node whose mechanism is parent-free
+  (`tF n u pa = g u`) solves to `g` of the drawn value. It works because
+  the value round-trips `enc → dec → enc → dec`, so every step is `encK`;
+  it never needs `enc (dec m) = m`, the range-closure property that blocks
+  the general lemma. Plus `o_node_self` (`o_node` retracts `ssval`).
+  *Why `g` is free:* the proof only ever rewrites with the mechanism
+  hypothesis once, so the identity played no role; naming `g` costs
+  nothing. (With `find_parents = nil`, `parent_view n` has essentially one
+  inhabitant, so every `tnodefun` at `n` is already `pa`-independent — `g`
+  just has to be named to say what the answer is.)
 - **`measure_source_empirical`** (`TypedExp.v`) — the finite-sample
   counterpart: run the protocol on every unit of a sample and tabulate, and
-  you recover the abstract law, given the sample is representative
-  (`emp us = fdist_context P`, stated rather than assumed away — note
-  `fdist_context P` is not uniform in general, so plain enumeration only
-  works in the uniform case).
+  you recover the abstract law `dmap g (P n)`, given the sample is
+  representative (`emp us = fdist_context P`, stated rather than assumed
+  away — note `fdist_context P` is not uniform in general, so plain
+  enumeration only works in the uniform case).
 - **`measure_source_lln`** (`TypedExp.v`, 2026-09-30) — the weak law for the
   outcome: over N+1 independent units, the empirical frequency of a value
-  `v` is within `eps` of `P n v` except with probability at most
+  `v` is within `eps` of `dmap g (P n) v` except with probability at most
   `V / ((N+1) eps^2)`. Finite-N Chebyshev, no limits — which is what makes
   it provable at all, since `fdist` is finite-support and the infinite
   product space almost-sure convergence needs is not expressible. Together
@@ -425,6 +433,12 @@ Proposed order (dates are suggestions — adjust with supervisor):
 - **M5a** ✅ 2026-09-30 — **hello-world theorems**: `measure_source_law`
   (exact law equality) and `measure_source_empirical` (finite sample), plus
   `solve_source`, `emp`/`emp_map` and `sum_iidE`. See Status above.
+  Generalised 2026-10-03 from "mechanism = identity" to "mechanism is
+  parent-free", i.e. `tF n u pa = g u` for arbitrary `g`; the laws became
+  pushforwards `dmap g (P n)`. Cost: four signatures and one `dmap_comp`
+  step. **This is the first fragment of the general pushforward story**
+  (M4c): a parent-free node already shows the shape "law of the logged
+  value = `dmap` (what the mechanism does) (the exogenous law)".
 - **M4c** (next) — **distribution semantics of a program**: the distributional
   layer attaches to `abs_state`, not to logs (the log is the *concrete*
   output). `Randomize n` is surgery on the exogenous law (substitute the coin

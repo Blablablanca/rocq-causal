@@ -441,28 +441,37 @@ case: (bdec _) => E; last by rewrite Hu in E.
 by congr Some; apply: val_inj.
 Qed.
 
-(* A node with NO PARENTS whose mechanism echoes its own noise takes exactly
-   the value drawn for it: [solve] recovers the context.
+(* A node with NO PARENTS whose mechanism reads ONLY its own noise -- i.e.
+   [tF n u pa = g u] for some [g : dom n -> dom n], with [pa] appearing
+   nowhere -- takes the value [g] assigns to the noise drawn for it:
+   [solve] applies [g] to the context.  The pure echo is the case [g = id].
+
+   The mechanism is not required to be the identity, only to be independent
+   of the parent view; [g] is arbitrary.  (With [find_parents = nil] every
+   [tnodefun] at [n] is in fact [pa]-independent, since [parent_view n] is
+   then a type with essentially one inhabitant -- but [g] has to be named to
+   say what the answer IS.)
 
    This is the first case where the solver is proved to compute what the
    typed mechanism SAYS, rather than merely something total.  It works here
    because the value round-trips as enc -> dec -> enc -> dec, so every step
    is [encK]; it never needs [enc (dec m) = m], the range-closure property
    that blocks the general elaboration-correctness lemma. *)
-Lemma solve_source (tF : tgraphfun) (w : context) (n : Node) :
+Lemma solve_source (tF : tgraphfun) (w : context) (n : Node)
+    (g : dom n -> dom n) :
   G_well_formed G = true -> contains_cycle G = false ->
   find_parents (ssval n) G = nil ->
-  (forall (u : dom n) (pa : parent_view n), tF n u pa = u) ->
-  solve tF w n = w n.
+  (forall (u : dom n) (pa : parent_view n), tF n u pa = g u) ->
+  solve tF w n = g (w n).
 Proof.
-move=> Hwf Hcyc Hnp Hecho.
+move=> Hwf Hcyc Hnp Hmech.
 have [P [_ Hfv]] :=
   find_value_gives_value_of_node G (elab tF) (to_assign w) (ssval n)
     (conj Hwf Hcyc) (conj (to_assign_complete w) (node_in_graph_ssval n)).
 have Hval : find_value G (elab tF) (ssval n) (to_assign w) nil
-            = Some (enc n (w n)).
+            = Some (enc n (g (w n))).
   rewrite Hfv /get_value_of_node /= to_assign_get Hnp /=.
-  by rewrite /elab o_node_self /= encK Hecho.
+  by rewrite /elab o_node_self /= encK Hmech.
 rewrite /solve /Main.eval Hval.
 exact: encK.
 Qed.

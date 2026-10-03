@@ -270,13 +270,35 @@ by rewrite /solve.
 Qed.
 
 (* HELLO WORLD.  Run a protocol that measures one parentless node whose
-   mechanism echoes its own noise.  The law of what gets logged is exactly
-   the law that node was given: what you put in is what you get out.
+   mechanism reads only its own noise, [tF n u pa = g u].  The law of what
+   gets logged is exactly the PUSHFORWARD of that node's noise law through
+   its mechanism: what you put in is what you get out, modulo [g].
+
+   [g] is arbitrary -- the mechanism need not be the identity, only
+   parent-free.  [measure_source_law_echo] below is the [g = id] case.
 
    This is the end-to-end smoke test of the whole stack -- enc/dec,
    to_assign, find_value, eval, solve, run_unit_total, fdist_context --
    and it is an EXACT equality of laws, not a limit statement. *)
-Theorem measure_source_law (te : texperiment dom) (n : Node G) :
+Theorem measure_source_law (te : texperiment dom) (n : Node G)
+    (g : dom n -> dom n) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
+  fdist_log_val (elab_exp enc dec te) n = dmap g (P n).
+Proof.
+move=> Hwf Hcyc Hnp Hops Hmech.
+have Hs : forall w0 : context dom, solve enc dec (te_mech te) w0 n = g (w0 n).
+  by move=> w0; apply: solve_source.
+rewrite /fdist_log_val -fdist_context_marginal dmap_comp.
+apply: dmap_eq => w.
+by rewrite /comp (log_val_measure w Hops) Hs.
+Qed.
+
+(* the original hello world: a pure echo logs the noise law untouched *)
+Corollary measure_source_law_echo (te : texperiment dom) (n : Node G) :
   G_well_formed G = true ->
   contains_cycle G = false ->
   find_parents (ssval n) G = nil ->
@@ -285,13 +307,8 @@ Theorem measure_source_law (te : texperiment dom) (n : Node G) :
   fdist_log_val (elab_exp enc dec te) n = P n.
 Proof.
 move=> Hwf Hcyc Hnp Hops Hecho.
-have Hs : forall w0 : context dom, solve enc dec (te_mech te) w0 n = w0 n.
-  by move=> w0; apply: solve_source.
-rewrite /fdist_log_val.
-transitivity (dmap (fun w : context dom => w n) (fdist_context P));
-  last exact: fdist_context_marginal.
-apply: dmap_eq => w.
-by rewrite (log_val_measure w Hops) Hs.
+rewrite (@measure_source_law te n id Hwf Hcyc Hnp Hops Hecho).
+by rewrite /dmap fdistmap_id.
 Qed.
 
 (* ===================================================================== *)
@@ -300,9 +317,9 @@ Qed.
 (* [measure_source_law] is about the population law.  An experimenter     *)
 (* sees a finite sample, so here is the finite-sample counterpart: run    *)
 (* the protocol on every unit of [us], tabulate the logged values, and    *)
-(* you get back the abstract law -- PROVIDED the sample is representative *)
-(* ([emp us = fdist_context P]).  That hypothesis is the honest form of   *)
-(* "exhaustive": it says the sample already carries the right law, and it *)
+(* you get back the abstract law [dmap g (P n)] -- PROVIDED [us] is       *)
+(* representative ([emp us = fdist_context P]).  That is the honest       *)
+(* form of "exhaustive": the sample already carries the right law, and it *)
 (* is stated rather than assumed away.                                    *)
 (*                                                                        *)
 (* The work is done by [Prob.emp_map]: tabulating and then pushing        *)
@@ -311,6 +328,7 @@ Qed.
 (* ===================================================================== *)
 
 Theorem measure_source_empirical (te : texperiment dom) (n : Node G)
+    (g : dom n -> dom n)
     (N : nat) (us : list (context dom))
     (Hus : size us = N.+1)
     (Hlog : size (map (fun w => log_val (elab_exp enc dec te) w n) us) = N.+1) :
@@ -318,11 +336,11 @@ Theorem measure_source_empirical (te : texperiment dom) (n : Node G)
   contains_cycle G = false ->
   find_parents (ssval n) G = nil ->
   te_ops te = @TMeasure G dom n :: nil ->
-  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
   emp Hus = fdist_context P ->
-  emp Hlog = P n.
+  emp Hlog = dmap g (P n).
 Proof.
-move=> Hwf Hcyc Hnp Hops Hecho Hrep.
+move=> Hwf Hcyc Hnp Hops Hmech Hrep.
 rewrite (emp_map Hus Hlog) Hrep.
 exact: measure_source_law.
 Qed.
@@ -334,8 +352,8 @@ Qed.
 (* representative.  A real sample never is, so the honest question is how *)
 (* far off it can be.  Chebyshev answers it: for the indicator of a single *)
 (* outcome value [v], the empirical frequency over N+1 INDEPENDENT units  *)
-(* is within [eps] of the true probability except with probability at     *)
-(* most [V / ((N+1) eps^2)].                                              *)
+(* is within [eps] of the true probability [dmap g (P n) v] except with   *)
+(* probability at most [V / ((N+1) eps^2)].                               *)
 (*                                                                        *)
 (* The bound is finite-N, not a limit -- which is what makes this         *)
 (* provable here at all: [fdist] is finite-support only, so the infinite  *)
@@ -358,42 +376,43 @@ Definition outcome_set (e : Main.experiment) (n : Node G) (v : dom n)
 
 (* its indicator's mean IS the outcome law -- this is where
    [measure_source_law] enters *)
-Lemma E_outcome (te : texperiment dom) (n : Node G) (v : dom n) :
+Lemma E_outcome (te : texperiment dom) (n : Node G) (v : dom n)
+    (g : dom n -> dom n) :
   G_well_formed G = true ->
   contains_cycle G = false ->
   find_parents (ssval n) G = nil ->
   te_ops te = @TMeasure G dom n :: nil ->
-  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
   `E (Ind (@outcome_set (elab_exp enc dec te) n v)
-      : {RV (fdist_context P) -> R^o}) = P n v.
+      : {RV (fdist_context P) -> R^o}) = dmap g (P n) v.
 Proof.
-move=> Hwf Hcyc Hnp Hops Hecho.
-rewrite E_Ind /Pr -(measure_source_law Hwf Hcyc Hnp Hops Hecho).
+move=> Hwf Hcyc Hnp Hops Hmech.
+rewrite E_Ind /Pr -(measure_source_law Hwf Hcyc Hnp Hops Hmech).
 rewrite /fdist_log_val /dmap fdistmapE.
 by apply: eq_bigl => w; rewrite !inE.
 Qed.
 
 Theorem measure_source_lln (te : texperiment dom) (n : Node G) (v : dom n)
-    (N : nat) (eps : R) :
+    (g : dom n -> dom n) (N : nat) (eps : R) :
   G_well_formed G = true ->
   contains_cycle G = false ->
   find_parents (ssval n) G = nil ->
   te_ops te = @TMeasure G dom n :: nil ->
-  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
   0 < eps ->
   `Pr[ (normr `o
         ((@sum_iid R (context dom) (fdist_context P) N.+1
             (Ind (@outcome_set (elab_exp enc dec te) n v)) `/ N.+1)
-         `-cst (P n v))) >= eps ]
+         `-cst (dmap g (P n) v))) >= eps ]
   <= `V (Ind (@outcome_set (elab_exp enc dec te) n v)
          : {RV (fdist_context P) -> R^o})
      / (N.+1%:R * eps ^+ 2).
 Proof.
-move=> Hwf Hcyc Hnp Hops Hecho Heps.
+move=> Hwf Hcyc Hnp Hops Hmech Heps.
 set Xv := Ind (@outcome_set (elab_exp enc dec te) n v).
-apply: (@wlln _ _ _ _ (\row_(i < N.+1) Xv) (P n v) _ (`V Xv) _ _
+apply: (@wlln _ _ _ _ (\row_(i < N.+1) Xv) (dmap g (P n) v) _ (`V Xv) _ _
                (sum_iidE N Xv) _ Heps).
-- by move=> i; rewrite mxE /Xv E_outcome.
+- by move=> i; rewrite mxE /Xv (@E_outcome te n v g Hwf Hcyc Hnp Hops Hmech).
 - by move=> i; rewrite mxE.
 Qed.
 
