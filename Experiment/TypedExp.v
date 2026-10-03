@@ -1,6 +1,6 @@
 Set Warnings "-notation-overridden,-deprecated-library-file,-ambiguous-paths".
 From HB Require Import structures.
-From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals matrix.
+From mathcomp Require Import all_ssreflect all_algebra finalg reals matrix.
 From mathcomp Require boolp.
 From infotheo Require Import ssr_ext ssralg_ext fdist proba.
 From DAGs Require Import Basics_Constr Descendants CycleDetection.
@@ -327,11 +327,74 @@ rewrite (emp_map Hus Hlog) Hrep.
 exact: measure_source_law.
 Qed.
 
-(* NEXT: the law of large numbers for this.  [Prob.sum_iidE] (the generic
-   n-iid-copies sum, which infotheo only instantiates for one specific
-   random variable) plus infotheo's [wlln] give a quantitative Chebyshev
-   bound on the empirical frequency.  Blocked only on wiring the outcome
-   indicator into [Ex]: [Ex] ranges over an [lmodType], and the [{RV P -> R}]
-   phantom does not unify there without help. *)
+(* ===================================================================== *)
+(* Weak law of large numbers for the outcome                             *)
+(* --------------------------------------------------------------------- *)
+(* [measure_source_empirical] needs the sample to be EXACTLY              *)
+(* representative.  A real sample never is, so the honest question is how *)
+(* far off it can be.  Chebyshev answers it: for the indicator of a single *)
+(* outcome value [v], the empirical frequency over N+1 INDEPENDENT units  *)
+(* is within [eps] of the true probability except with probability at     *)
+(* most [V / ((N+1) eps^2)].                                              *)
+(*                                                                        *)
+(* The bound is finite-N, not a limit -- which is what makes this         *)
+(* provable here at all: [fdist] is finite-support only, so the infinite  *)
+(* product space that almost-sure convergence needs is not expressible.   *)
+(* A 1/N bound gives convergence in probability without mentioning one.   *)
+(*                                                                        *)
+(* Note the [R^o] ascriptions: [`E]/[`V] need the codomain seen through   *)
+(* an lmodType, and [Ind]'s codomain [R] otherwise resolves via the       *)
+(* realType route, which carries no module structure.  [R^o] is R as a    *)
+(* module over itself, and it is what [wlln] unifies with.                *)
+(* ===================================================================== *)
+
+Local Open Scope proba_scope.
+Local Open Scope ring_scope.
+Import Num.Def.
+
+(* the event "this unit's logged value is v" *)
+Definition outcome_set (e : Main.experiment) (n : Node G) (v : dom n)
+  : {set context dom} := [set w : context dom | log_val e w n == v].
+
+(* its indicator's mean IS the outcome law -- this is where
+   [measure_source_law] enters *)
+Lemma E_outcome (te : texperiment dom) (n : Node G) (v : dom n) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  `E (Ind (@outcome_set (elab_exp enc dec te) n v)
+      : {RV (fdist_context P) -> R^o}) = P n v.
+Proof.
+move=> Hwf Hcyc Hnp Hops Hecho.
+rewrite E_Ind /Pr -(measure_source_law Hwf Hcyc Hnp Hops Hecho).
+rewrite /fdist_log_val /dmap fdistmapE.
+by apply: eq_bigl => w; rewrite !inE.
+Qed.
+
+Theorem measure_source_lln (te : texperiment dom) (n : Node G) (v : dom n)
+    (N : nat) (eps : R) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = u) ->
+  0 < eps ->
+  `Pr[ (normr `o
+        ((@sum_iid R (context dom) (fdist_context P) N.+1
+            (Ind (@outcome_set (elab_exp enc dec te) n v)) `/ N.+1)
+         `-cst (P n v))) >= eps ]
+  <= `V (Ind (@outcome_set (elab_exp enc dec te) n v)
+         : {RV (fdist_context P) -> R^o})
+     / (N.+1%:R * eps ^+ 2).
+Proof.
+move=> Hwf Hcyc Hnp Hops Hecho Heps.
+set Xv := Ind (@outcome_set (elab_exp enc dec te) n v).
+apply: (@wlln _ _ _ _ (\row_(i < N.+1) Xv) (P n v) _ (`V Xv) _ _
+               (sum_iidE N Xv) _ Heps).
+- by move=> i; rewrite mxE /Xv E_outcome.
+- by move=> i; rewrite mxE.
+Qed.
 
 End ExperimentLaw.

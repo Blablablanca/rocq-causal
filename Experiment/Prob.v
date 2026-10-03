@@ -1,7 +1,8 @@
 Set Warnings "-notation-overridden,-deprecated-library-file,-ambiguous-paths".
 From HB Require Import structures.
-From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals.
-From infotheo Require Import fdist.
+From mathcomp Require Import all_ssreflect ssralg ssrnum finalg reals matrix.
+From mathcomp Require boolp.
+From infotheo Require Import ssr_ext ssralg_ext fdist proba.
 From Stdlib Require Import Lia.
 From Stdlib Require Import FunctionalExtensionality.
 From DAGs Require Import Basics_Constr Descendants CycleDetection.
@@ -60,6 +61,123 @@ Lemma dmap_comp {R : realType} {A B C : finType}
   (g : B -> C) (f : A -> B) (P : R.-fdist A) :
   dmap g (dmap f P) = dmap (g \o f) P.
 Proof. by rewrite /dmap fdistmap_comp. Qed.
+
+(* --- n iid copies of one random variable ------------------------------ *)
+(* infotheo ships the n-fold-sum relation [\=sum] and the weak law [wlln],
+   but only ever instantiates the sum for one specific random variable
+   (aep.v's [sum_mlog_prod]).  This is the generic version -- the sum of n
+   iid copies of ANY real-valued random variable -- which is what lets
+   [wlln] be applied to an experiment's outcome indicator. *)
+Section SumIID.
+Import GRing.Theory.
+Context {R : realType}.
+Variables (A : finType) (P : R.-fdist A).
+Local Open Scope vec_ext_scope.
+Local Open Scope ring_scope.
+Local Open Scope proba_scope.
+
+Definition sum_iid n (f : {RV P -> R^o}) : {RV (P `^ n)%fdist -> R^o} :=
+  fun t => \sum_(i < n) f (t ``_ i).
+
+Lemma sum_iidE n (f : {RV P -> R^o}) : @sum_iid n.+1 f \=sum (\row_(i < n.+1) f).
+Proof.
+elim: n => [|n IH].
+- move: (@sum_n_1 _ A P (\row_i f)).
+  set g := cast_fun_rV10 _ => Hg.
+  suff -> : @sum_iid 1 f = g by [].
+  rewrite /g /sum_iid /cast_fun_rV10 /= mxE /=.
+  by rewrite boolp.funeqE => ta; rewrite big_ord_recl big_ord0 addr0.
+- rewrite [X in _ \=sum X](_ : _ =
+      row_mx (\row_(i < 1) f) (\row_(i < n.+1) f)); last first.
+    apply/rowP => b; rewrite !mxE; case: splitP.
+      by move=> a; rewrite {a}(ord1 a) => _; rewrite mxE.
+    by move=> k _; rewrite mxE.
+  apply: (sum_n_cons IH _) => /= ta.
+  rewrite /sum_iid /= big_ord_recl /=; congr (_ + _).
+  by apply: eq_bigr => i _; rewrite mxE.
+Qed.
+
+End SumIID.
+
+(* --- the empirical distribution of a sample --------------------------- *)
+(* infotheo has no "distribution of a list": [fdist_uniform] is uniform
+   over a whole finType, not over a multiset of draws.  This is it --
+   [emp s v] is the fraction of [s] equal to [v] -- together with the one
+   fact that makes it useful: taking the empirical distribution COMMUTES
+   with applying a function.  That is what lets a concrete run over a
+   sample be compared with an abstract pushforward. *)
+Section Empirical.
+Import GRing.Theory Num.Theory.
+Local Open Scope ring_scope.
+Context {R : realType}.
+Variable A : finType.
+Variables (N : nat) (s : list A).
+Hypothesis Hs : size s = N.+1.
+
+(* each element of A is counted once per occurrence, so the counts total
+   the sample size *)
+Lemma sum_count_size (l : list A) : (\sum_(v : A) count (pred1 v) l = size l)%N.
+Proof.
+elim: l => [|a l IH] /=; first by apply: big1.
+rewrite big_split /= IH.
+have -> : (\sum_(v : A) nat_of_bool (a == v) = 1)%N.
+  by rewrite (bigD1 a) //= eqxx big1 ?addn0 // => i /negbTE; rewrite eq_sym => ->.
+by rewrite add1n.
+Qed.
+
+Let ef : {ffun A -> R} :=
+  [ffun v => (count (pred1 v) s)%:R / (size s)%:R].
+
+Let ef0 v : 0 <= ef v.
+Proof. by rewrite ffunE divr_ge0 // ler0n. Qed.
+
+Let ef1 : \sum_(v in A) ef v = 1.
+Proof.
+under eq_bigr do rewrite ffunE.
+rewrite -big_distrl /= -natr_sum sum_count_size Hs divff //.
+by rewrite pnatr_eq0.
+Qed.
+
+Definition emp : R.-fdist A := locked (FDist.make ef0 ef1).
+
+Lemma empE v : emp v = (count (pred1 v) s)%:R / (size s)%:R.
+Proof. by rewrite /emp; unlock; rewrite ffunE. Qed.
+
+End Empirical.
+
+Section EmpiricalMap.
+Import GRing.Theory Num.Theory.
+Local Open Scope ring_scope.
+Context {R : realType}.
+Variables (A B : finType).
+
+(* a count over a finType splits into the counts of its fibres *)
+Lemma count_partition (p : A -> bool) (l : list A) :
+  (count p l = \sum_(a : A | p a) count (pred1 a) l)%N.
+Proof.
+elim: l => [|x l IH] /=; first by symmetry; apply: big1.
+rewrite big_split /= -IH; congr (_ + _)%N.
+case Hx : (p x).
+- rewrite (bigD1 x) //= eqxx big1 ?addn0 //.
+  by move=> i /andP[_ Hi]; rewrite eq_sym; move/negbTE: Hi => ->.
+- symmetry; apply: big1 => a Ha; case: eqP => // Hxa.
+  by move: Hx; rewrite Hxa Ha.
+Qed.
+
+(* THE COMMUTATION: tabulating a sample and then pushing it through [f] is
+   the same as running [f] on every unit and tabulating the results. *)
+Lemma emp_map (N : nat) (l : list A) (HN : size l = N.+1)
+    (f : A -> B) (HM : size (map f l) = N.+1) :
+  @emp R B N (map f l) HM = dmap f (@emp R A N l HN).
+Proof.
+apply/fdist_ext => b.
+rewrite empE /dmap fdistmapE size_map HN.
+rewrite count_map (count_partition (fun a => f a == b) l).
+rewrite natr_sum big_distrl /=.
+by apply: eq_bigr => a _; rewrite empE HN.
+Qed.
+
+End EmpiricalMap.
 
 (* --- helper for the read-after-write lemma below --- *)
 Lemma get_assigned_value_map (I : eqType) (key val : I -> nat)
@@ -311,6 +429,42 @@ Proof.
 move=> Hwf Hcyc; apply: Main.eval_find_value => //.
 - exact: to_assign_complete.
 - exact: node_in_graph_ssval.
+Qed.
+
+(* --- source nodes: the first instance of elaboration correctness ------ *)
+
+(* [o_node] is a retraction of [ssval] on genuine nodes *)
+Lemma o_node_self (n : Node) : o_node (ssval n) = Some n.
+Proof.
+case: n => u Hu; rewrite /o_node /=.
+case: (bdec _) => E; last by rewrite Hu in E.
+by congr Some; apply: val_inj.
+Qed.
+
+(* A node with NO PARENTS whose mechanism echoes its own noise takes exactly
+   the value drawn for it: [solve] recovers the context.
+
+   This is the first case where the solver is proved to compute what the
+   typed mechanism SAYS, rather than merely something total.  It works here
+   because the value round-trips as enc -> dec -> enc -> dec, so every step
+   is [encK]; it never needs [enc (dec m) = m], the range-closure property
+   that blocks the general elaboration-correctness lemma. *)
+Lemma solve_source (tF : tgraphfun) (w : context) (n : Node) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  (forall (u : dom n) (pa : parent_view n), tF n u pa = u) ->
+  solve tF w n = w n.
+Proof.
+move=> Hwf Hcyc Hnp Hecho.
+have [P [_ Hfv]] :=
+  find_value_gives_value_of_node G (elab tF) (to_assign w) (ssval n)
+    (conj Hwf Hcyc) (conj (to_assign_complete w) (node_in_graph_ssval n)).
+have Hval : find_value G (elab tF) (ssval n) (to_assign w) nil
+            = Some (enc n (w n)).
+  rewrite Hfv /get_value_of_node /= to_assign_get Hnp /=.
+  by rewrite /elab o_node_self /= encK Hecho.
+rewrite /solve /Main.eval Hval.
+exact: encK.
 Qed.
 
 End Boundary.

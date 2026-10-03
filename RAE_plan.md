@@ -126,6 +126,18 @@ Decisions taken 2026-09-23:
 | D12 | **A typed operation SURFACE that compiles down** (`toperation` + `elab_op` in `TypedExp.v`), not a retyped `Main.operation` | *Alt 1:* retype `operation` to carry `Node G`/`dom n`. Rejected on three counts: mathcomp would enter `Main.v` against the stated style boundary; the type must be graph-indexed, and after surgery `Node (remove_incoming n G)` is **not convertible** with `Node G` for abstract `G` (`nodes_in_graph (remove_incoming n G)` reduces to `fst G`, `nodes_in_graph G` is stuck), so the abstract layer would thread transports; and every proved theorem over operations needs rework. *Alt 2:* leave operations untyped — keeps `Intervene 1 1` and value-range errors as proof obligations. Compiling down mirrors `tgraphfun`/`elab` exactly, costs one elaboration tax already paid elsewhere, and makes **half of `wf_operation` structural**: a `Node G` cannot name a node outside `G`, so only the label obligations remain. |
 | D11 | **DEFERRED 2026-09-28 (supervisor): no `Filter` operation for now.** Design reached, kept for when it returns: `Filter (ns : nodes) (keep : assignments nat -> bool)` — read set separate from rule, because the read set *is* the conditioning set `Z` the d-separation checks consume; a bare `raw_context -> bool` would hide it and make selection bias invisible to them. `keep` takes an `assignments nat` (keyed access, consistent with D8). `abs_state` gained a `conditioned : nodes` field alongside `measured`. Costs that motivated deferring: `operation` loses decidable equality; the distributional semantics acquires a side condition (conditioning on a probability-zero event) that well-formedness cannot discharge; and it breaks the product form of the exogenous law (see below). Code recoverable from commit `0e80c37`. |
 
+**Finite sample space is not a finite population.** `R.-fdist A` requires
+the *sample space* `A` to be a finType — for us `context dom`, the set of
+possible exogenous draws, finite because every node has a finite domain
+(UA4). The **population is a distribution, not a list**: each unit is a
+fresh draw from `fdist_context P`, so the population is idealised/infinite
+and only the *sample* is finite (`us : list (context dom)` with
+`size us = N.+1`). `#|context dom| = ∏ₙ |dom n|` counts distinguishable
+unit *types*, not people. What finiteness really costs is continuous
+outcomes: a real-valued node needs discretising, or a move to
+`fsdist`/measure theory. **UA6 ("population is finite") should be reworded
+— it is the sample that is finite, not the population.**
+
 **Universal Assumption 2, and why `Filter` is not free** (relevant if D11
 returns). "All exogenous variables are mutually independent" holds of the
 **initial** law. `Filter` conditions on an
@@ -253,6 +265,52 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
 
 ## Status: done and surviving
 
+- **`measure_source_law`** (`TypedExp.v`, 2026-09-30) — the hello-world, at
+  the EXPERIMENT level: run a protocol that measures one parentless node
+  whose mechanism echoes its own noise, and the law of the logged value is
+  exactly that node's exogenous law. Exercises the whole stack
+  (enc/dec → to_assign → find_value → eval → solve → run_unit_total →
+  fdist_context). Axioms: boolp's three only.
+- **`solve_source`** (`Prob.v`) — the **first proved instance of elaboration
+  correctness**: a parentless node whose mechanism echoes its noise solves
+  to the drawn value. It works because the value round-trips
+  `enc → dec → enc → dec`, so every step is `encK`; it never needs
+  `enc (dec m) = m`, the range-closure property that blocks the general
+  lemma. Plus `o_node_self` (`o_node` retracts `ssval`).
+- **`measure_source_empirical`** (`TypedExp.v`) — the finite-sample
+  counterpart: run the protocol on every unit of a sample and tabulate, and
+  you recover the abstract law, given the sample is representative
+  (`emp us = fdist_context P`, stated rather than assumed away — note
+  `fdist_context P` is not uniform in general, so plain enumeration only
+  works in the uniform case).
+- **`measure_source_lln`** (`TypedExp.v`, 2026-09-30) — the weak law for the
+  outcome: over N+1 independent units, the empirical frequency of a value
+  `v` is within `eps` of `P n v` except with probability at most
+  `V / ((N+1) eps^2)`. Finite-N Chebyshev, no limits — which is what makes
+  it provable at all, since `fdist` is finite-support and the infinite
+  product space almost-sure convergence needs is not expressible. Together
+  with `measure_source_law` (population) and `measure_source_empirical`
+  (exact sample) this is the full "concrete log → abstract law" story.
+  Axioms: boolp's three only.
+  *Gotcha worth remembering:* `` `E ``/`` `V `` need the codomain seen
+  through an **lmodType**. Writing `{RV P -> R}` resolves `R`'s eqType via
+  the realType route, which carries no module structure, and nothing in
+  scope fixes that (not `all_algebra`, `normedtype`, or proba.v's own
+  preamble — even infotheo's `E_Ind` statement fails to re-typecheck).
+  **`R^o`** — R as a module over itself — is the ascription that works, and
+  `wlln` unifies with it.
+- **New probability machinery** (`Prob.v`), none of which infotheo ships:
+  - `emp` / `empE` — the empirical distribution of a sample list
+    (`fdist_uniform` is uniform over a whole finType, not over a multiset).
+  - `emp_map` — **tabulating then pushing through `f` = running `f` on
+    every unit then tabulating.** This is what makes a concrete run
+    comparable with an abstract pushforward.
+  - `count_partition`, `sum_count_size` — the counting lemmas underneath.
+  - `sum_iidE` — the sum of *n* iid copies of an ARBITRARY random variable
+    with its `\=sum` derivation; infotheo only instantiates this for one
+    specific RV (`aep.v`'s `sum_mlog_prod`). This is the missing ingredient
+    for applying `wlln`.
+
 - **`randomize_semantic_do`** (`Correctness.v`) — per-world core of Theorem A
   for Randomize, proved, no admits. Survives the reframe verbatim (it is a
   statement about `find_value`, not about the experiment record). Now read as:
@@ -364,6 +422,9 @@ Proposed order (dates are suggestions — adjust with supervisor):
   whose `dag_fun_compatible` clause is discharged by `elab_compatible`.
   Worked typed RCT on G3 elaborating to `[Randomize 1; Measure 2]` by
   `reflexivity`, and `TIntervene x3 cured` rejected as a type error.
+- **M5a** ✅ 2026-09-30 — **hello-world theorems**: `measure_source_law`
+  (exact law equality) and `measure_source_empirical` (finite sample), plus
+  `solve_source`, `emp`/`emp_map` and `sum_iidE`. See Status above.
 - **M4c** (next) — **distribution semantics of a program**: the distributional
   layer attaches to `abs_state`, not to logs (the log is the *concrete*
   output). `Randomize n` is surgery on the exogenous law (substitute the coin
