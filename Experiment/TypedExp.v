@@ -146,12 +146,32 @@ Qed.
 
 (* --- the typed experiment --------------------------------------------- *)
 (* Graph, domains and codes are fixed by the section; a typed experiment
-   adds the labels, the typed mechanism and the typed protocol. *)
+   adds the labels, the typed mechanism, the typed protocol, and the SAMPLE
+   SIZE it is run at.
+
+   [te_size] is a hyperparameter, not data: it says how many units the
+   protocol draws, never which ones.  That is what keeps it clear of D7.
+   The field D7 removed was [sample : list raw_context] on
+   [Main.experiment], which held the units themselves and served as the
+   input LAW ("uniform over these"), so the same protocol over a second
+   cohort was a different experiment.  A SIZE says nothing about who is in
+   the study: the population stays [fdist_context P], which does not
+   mention [te_size], and two cohorts of the same size give the SAME
+   [texperiment].  What it does distinguish is N = 400 from N = 1000, which
+   is the point of recording it -- a trial's sample size is pre-registered
+   design, fixed before any data exists, exactly like the choice of which
+   node to randomize.
+
+   It lives on the TYPED record only.  [elab_exp] discards it, because the
+   untyped semantics runs one unit at a time and has no notion of a sample
+   at all; the size is consumed by the sample-level laws at the end of this
+   file, where it sets the RATE of convergence. *)
 
 Record texperiment : Type := mk_texperiment {
   te_labels : node -> Main.node_label;
   te_mech   : tgraphfun dom;
   te_ops    : list toperation;
+  te_size   : nat;              (* how many units the protocol runs on *)
 }.
 
 Definition te_aug (te : texperiment) : Main.aug_graph :=
@@ -414,6 +434,128 @@ apply: (@wlln _ _ _ _ (\row_(i < N.+1) Xv) (dmap g (P n) v) _ (`V Xv) _ _
                (sum_iidE N Xv) _ Heps).
 - by move=> i; rewrite mxE /Xv (@E_outcome te n v g Hwf Hcyc Hnp Hops Hmech).
 - by move=> i; rewrite mxE.
+Qed.
+
+(* ===================================================================== *)
+(* The sample: one protocol, N units                                     *)
+(* --------------------------------------------------------------------- *)
+(* Everything above is per-unit.  [log_val] runs the protocol on ONE       *)
+(* context, and the sample in [measure_source_lln] is anonymous -- it is   *)
+(* only the domain of [sum_iid]'s random variable, named nowhere and       *)
+(* connected to nothing.  This block names it.                            *)
+(*                                                                        *)
+(* A sample must be LENGTH-INDEXED; see the note at [Prob.emp_rV].  Hence  *)
+(* [sample N], and hence a sample SIZE is a hyperparameter: it is needed   *)
+(* to name the space the probability is on, before the statement exists.   *)
+(*                                                                        *)
+(* [fdist_sample] is where IID SAMPLING is assumed, and naming it puts two *)
+(* independent assumptions side by side: [fdist_context] is a product over *)
+(* NODES (UA2, a claim about the model), [`^ N] a product over UNITS (a    *)
+(* claim about the design).  Both were previously implicit in the single   *)
+(* step that reached for [sum_iid].                                       *)
+(*                                                                        *)
+(* [log_sample] is the payoff.  The protocol still contains exactly ONE    *)
+(* [TMeasure n]; the [\row_i] runs that one-op program at each of the N    *)
+(* units.  Measuring N units is not expressible by REPEATING the op --     *)
+(* [run_unit_total] takes one context, so N copies of [TMeasure n] would   *)
+(* log one unit's value N times -- which is why the sample belongs here,   *)
+(* in the denotation, rather than in the op list.                         *)
+(*                                                                        *)
+(* Scope: [log_sample] is node n's COLUMN of the dataset.  The whole       *)
+(* dataset -- every measured node at once -- still needs the finite log    *)
+(* type that multi-[Measure] protocols are waiting on.                    *)
+(* ===================================================================== *)
+
+Local Open Scope vec_ext_scope.
+Import GRing.Theory.
+
+(* a SAMPLE of size N: N exogenous draws, length-indexed so it has a law *)
+Definition sample (N : nat) := 'rV[context dom]_N.
+
+Definition fdist_sample (N : nat) : R.-fdist (sample N) :=
+  (fdist_context P) `^ N.
+
+(* run the protocol ONCE, over the whole sample *)
+Definition log_sample (e : Main.experiment) (n : Node G) (N : nat)
+    (s : sample N) : 'rV[dom n]_N :=
+  \row_i log_val e (s ``_ i) n.
+
+(* the estimator an experimenter actually reports: the empirical frequency
+   of the value [v] in the dataset, as a random variable OF THE SAMPLE *)
+Definition emp_freq (e : Main.experiment) (n : Node G) (v : dom n) (N : nat)
+  : {RV (fdist_sample N.+1) -> R^o} :=
+  fun s => emp_rV (log_sample e n s) v.
+
+(* The exact-sample law, restated on a length-indexed sample.  Note what is
+   no longer a hypothesis: the two size proofs that
+   [measure_source_empirical] carries in its STATEMENT are gone, because
+   the length is in the type.  Note also what is deliberately absent --
+   [te_size].  This conclusion quotes no rate, so the declared size has no
+   business appearing in it; a [te_size] hypothesis here would be one that
+   the proof never uses. *)
+Theorem measure_source_empirical_rV (te : texperiment dom) (n : Node G)
+    (g : dom n -> dom n) (N : nat) (s : sample N.+1) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
+  emp_rV s = fdist_context P ->
+  emp_rV (log_sample (elab_exp enc dec te) n s) = dmap g (P n).
+Proof.
+move=> Hwf Hcyc Hnp Hops Hmech Hrep.
+rewrite /log_sample (emp_rV_map (fun w => log_val (elab_exp enc dec te) w n)).
+by rewrite Hrep; exact: measure_source_law.
+Qed.
+
+(* THE LAW OF LARGE NUMBERS, stated about the program's own output.  The
+   protocol contains one [TMeasure n]; [emp_freq] is the frequency of [v]
+   among the N+1 values it produced; and this says that frequency is within
+   [eps] of the true probability [dmap g (P n) v] except with probability
+   at most [V / (declared size * eps^2)].
+
+   This is where [te_size] earns its keep: the PRE-REGISTERED sample size
+   sets the rate.  Drop [Hsz] and the statement is false, because the bound
+   would quote a size with no relation to the sample -- so the field is
+   load-bearing here, not bookkeeping.
+
+   The sample type is indexed by a free [N] rather than by [te_size te],
+   with [Hsz] carrying the link propositionally.  Indexing it by [te_size
+   te] would catch a size mismatch by typing, but [te_size te] is stuck on
+   an abstract [te], so every use of a sample would carry a transport --
+   the same cost D12 refused for graph-indexed operations.
+
+   The proof is a rewrite: [emp_freq] IS [sum_iid]'s average, by
+   [Prob.emp_rV_sum_iid], so [measure_source_lln] does all the work and no
+   new probability theory is needed. *)
+Theorem measure_source_emp_lln (te : texperiment dom) (n : Node G) (v : dom n)
+    (g : dom n -> dom n) (N : nat) (eps : R) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
+  te_size te = N.+1 ->
+  0 < eps ->
+  `Pr[ (normr `o
+        ((@emp_freq (elab_exp enc dec te) n v N)
+         `-cst (dmap g (P n) v))) >= eps ]
+  <= `V (Ind (@outcome_set (elab_exp enc dec te) n v)
+         : {RV (fdist_context P) -> R^o})
+     / ((te_size te)%:R * eps ^+ 2).
+Proof.
+move=> Hwf Hcyc Hnp Hops Hmech Hsz Heps.
+have Hrv :
+  (@emp_freq (elab_exp enc dec te) n v N)
+  = ((@sum_iid R (context dom) (fdist_context P) N.+1
+        (Ind (@outcome_set (elab_exp enc dec te) n v))) `/ N.+1).
+  apply: boolp.funext => s.
+  rewrite /emp_freq /log_sample.
+  rewrite (emp_rV_sum_iid (fdist_context P)
+             (fun w => log_val (elab_exp enc dec te) w n) v s).
+  by rewrite /GRing.scale /= mulrC.
+rewrite Hrv Hsz.
+exact: measure_source_lln.
 Qed.
 
 End ExperimentLaw.

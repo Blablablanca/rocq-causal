@@ -179,6 +179,73 @@ Qed.
 
 End EmpiricalMap.
 
+(* --- the empirical distribution of a length-INDEXED sample ------------ *)
+(* [emp] above tabulates a [list], whose length is data.  A sample whose
+   length is data cannot carry a LAW: [R.-fdist A] needs [A : finType], and
+   [list A] is not one.  But "the empirical distribution converges to the
+   true one" is a claim about the probability that a RANDOMLY DRAWN sample
+   lands close, so the randomness ranges over samples and samples must have
+   a law.  Hence this version: [emp_rV s] tabulates a row vector, whose
+   length is in its TYPE.  There is accordingly no single space of all
+   samples, only a family indexed by the length -- which is exactly why a
+   sample size has to be fixed before the probability can even be named.
+
+   Defining it as the pushforward of the uniform law on INDICES rather than
+   by counting is what makes [emp_rV_map] fall out of [dmap_comp] in two
+   lines, where the list version needed [count_partition].  [emp_rVE] is
+   the counting form, and the two agree.  [emp_rV_sum_iid] is the link to
+   [wlln]: the empirical frequency of one value IS the normalised sum of
+   indicators that the weak law averages. *)
+Section EmpRV.
+Import GRing.Theory Num.Theory.
+Local Open Scope ring_scope.
+Local Open Scope proba_scope.
+Local Open Scope vec_ext_scope.
+Context {R : realType}.
+
+Definition emp_rV (A : finType) (N : nat) (s : 'rV[A]_N.+1) : R.-fdist A :=
+  dmap (fun i : 'I_N.+1 => s ``_ i) (dunif (card_ord N.+1)).
+
+(* tabulating a sample and then pushing it through [f] is the same as
+   running [f] on every unit and tabulating -- [emp_map], for free *)
+Lemma emp_rV_map (A B : finType) (N : nat) (f : A -> B) (s : 'rV[A]_N.+1) :
+  emp_rV (\row_i f (s ``_ i)) = dmap f (emp_rV s).
+Proof.
+rewrite /emp_rV dmap_comp; apply: dmap_eq => i /=.
+by rewrite mxE.
+Qed.
+
+(* the counting form: the fraction of the sample equal to [v] *)
+Lemma emp_rVE (A : finType) (N : nat) (s : 'rV[A]_N.+1) (v : A) :
+  emp_rV s v = #|[set i : 'I_N.+1 | s ``_ i == v]|%:R / N.+1%:R.
+Proof.
+rewrite /emp_rV /dmap fdistmapE.
+under eq_bigr do rewrite /dunif fdist_uniformE card_ord.
+rewrite sumr_const mulr_natl; congr (_ *+ _).
+by apply/eq_card => i; rewrite !inE.
+Qed.
+
+(* THE BRIDGE to the weak law: the empirical frequency of [v] in the mapped
+   sample is the normalised sum of indicators, which is precisely the
+   quantity [wlln] bounds.  So a statement about what a program produced
+   needs no new probability theory -- it rewrites into the existing one. *)
+Lemma emp_rV_sum_iid (A B : finType) (PA : R.-fdist A) (N : nat)
+    (f : A -> B) (v : B) (s : 'rV[A]_N.+1) :
+  emp_rV (\row_i f (s ``_ i)) v
+  = (@sum_iid R A PA N.+1 (Ind [set a : A | f a == v]) s) / N.+1%:R.
+Proof.
+rewrite emp_rVE; congr (_ / _).
+rewrite /sum_iid -sum1_card natr_sum.
+rewrite [RHS](bigID (fun i : 'I_N.+1 => f (s ``_ i) == v)) /=.
+rewrite [X in _ + X]big1 ?addr0; last first.
+  by move=> i Hi; rewrite /Ind inE (negbTE Hi).
+rewrite big_mkcond /= [RHS]big_mkcond /=.
+apply: eq_bigr => i _; rewrite inE mxE.
+by case: ifPn => Hi; rewrite ?/Ind ?inE ?Hi.
+Qed.
+
+End EmpRV.
+
 (* --- helper for the read-after-write lemma below --- *)
 Lemma get_assigned_value_map (I : eqType) (key val : I -> nat)
   (Hinj : injective key) (l : list I) (i : I) :

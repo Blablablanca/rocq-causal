@@ -126,6 +126,8 @@ Decisions taken 2026-09-23:
 | D12 | **A typed operation SURFACE that compiles down** (`toperation` + `elab_op` in `TypedExp.v`), not a retyped `Main.operation` | *Alt 1:* retype `operation` to carry `Node G`/`dom n`. Rejected on three counts: mathcomp would enter `Main.v` against the stated style boundary; the type must be graph-indexed, and after surgery `Node (remove_incoming n G)` is **not convertible** with `Node G` for abstract `G` (`nodes_in_graph (remove_incoming n G)` reduces to `fst G`, `nodes_in_graph G` is stuck), so the abstract layer would thread transports; and every proved theorem over operations needs rework. *Alt 2:* leave operations untyped — keeps `Intervene 1 1` and value-range errors as proof obligations. Compiling down mirrors `tgraphfun`/`elab` exactly, costs one elaboration tax already paid elsewhere, and makes **half of `wf_operation` structural**: a `Node G` cannot name a node outside `G`, so only the label obligations remain. |
 | D11 | **DEFERRED 2026-09-28 (supervisor): no `Filter` operation for now.** Design reached, kept for when it returns: `Filter (ns : nodes) (keep : assignments nat -> bool)` — read set separate from rule, because the read set *is* the conditioning set `Z` the d-separation checks consume; a bare `raw_context -> bool` would hide it and make selection bias invisible to them. `keep` takes an `assignments nat` (keyed access, consistent with D8). `abs_state` gained a `conditioned : nodes` field alongside `measured`. Costs that motivated deferring: `operation` loses decidable equality; the distributional semantics acquires a side condition (conditioning on a probability-zero event) that well-formedness cannot discharge; and it breaks the product form of the exogenous law (see below). Code recoverable from commit `0e80c37`. |
 
+| D13 | **2026-10-07: the sample SIZE is a field of the typed experiment (`te_size : nat` on `texperiment`); the sample itself is not.** The sample-level laws take a free `N`, with `te_size te = N.+1` linking it | *Alt 1:* N as a parameter of the denotation only, no field — the semantic functions (`sample`, `fdist_sample`, `log_sample`) take it, the record stays as it was. Cheapest option (zero churn, no consistency hypothesis, and a field nothing in `elab_exp` or the wf-checks *can* read), but rejected: the reason to record N is that a trial's sample size is pre-registered **design**, fixed before any data exists, exactly like the choice of which node to randomize. A protocol that does not state its N is not a protocol. *Alt 2:* `sample : list raw_context` on `Main.experiment` — the field D7 removed. Rejected twice over: it would not even work (`list` has no `fdist`, so it could not be what the LLN quantifies over, and the `'rV`-indexed sample would still be needed beside it), and it reinstates what D7 rejected. **D7 is not reversed by D13:** D7's field held the *units* and served as the input LAW (`uniform {u₁…uₙ}` — today's `emp`), so the same protocol over a second cohort was a different experiment. A size names no population: two cohorts of the same size give the *same* `texperiment`, and the population remains `fdist_context P`, which does not mention `te_size`. What `te_size` distinguishes is N = 400 from N = 1000, which is the point. Indeed the passage that removed `sample` promised exactly this layer — "finite-sample estimation returns later as a statistics layer on top (i.i.d. draws)". *Alt 3:* index the sample type by the field (`'rV[context dom]_(te_size te)`), so a size mismatch is caught by **typing**. Rejected for D12's reason: `te_size te` is stuck on an abstract `te`, so every use of a sample would carry a transport. The propositional link costs one hypothesis and no transports — and per the standing preference, robustness beats loudly-caught mistakes. |
+
 **Finite sample space is not a finite population.** `R.-fdist A` requires
 the *sample space* `A` to be a finType — for us `context dom`, the set of
 possible exogenous draws, finite because every node has a finite domain
@@ -307,6 +309,43 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   preamble — even infotheo's `E_Ind` statement fails to re-typecheck).
   **`R^o`** — R as a module over itself — is the ascription that works, and
   `wlln` unifies with it.
+- **The sample as a first-class object** (`TypedExp.v`, 2026-10-07, D13) —
+  `sample N := 'rV[context dom]_N`, `fdist_sample N := (fdist_context P) `^ N`,
+  `log_sample` (run the protocol *once*, over all N units), `emp_freq` (the
+  empirical frequency of a value, as a random variable **of the sample**).
+  Before this the sample existed only as the anonymous domain of `sum_iid`'s
+  random variable — named nowhere, connected to nothing. Two gains beyond
+  the naming:
+  - **IID sampling became a named assumption.** It lives in `fdist_sample`,
+    and now sits visibly beside UA2: `fdist_context` is a product over
+    **nodes** (a claim about the model), `` `^ N `` a product over **units**
+    (a claim about the design). Both were previously implicit in the single
+    step that reached for `sum_iid`.
+  - **Why the size has to be a hyperparameter** — recorded because it reads
+    like a taste call and is not. `R.-fdist A` needs `A : finType` and
+    `list (context dom)` is not one, so a sample that is to be *drawn* must
+    be length-indexed. There is therefore no single space of all samples,
+    only a family indexed by N, and N is needed to **name the space the
+    probability is on** before the statement can exist. This is also the
+    reason `measure_source_empirical` must assume exact representativeness:
+    with a bare list there is nothing to take a probability over.
+  - One thing the sample layer does *not* give: `log_sample` is node n's
+    **column** of the dataset. The whole dataset (every measured node at
+    once) still waits on the finite log type.
+- **`measure_source_empirical_rV`** (`TypedExp.v`, 2026-10-07) — the
+  exact-sample law on a length-indexed sample. Strictly cleaner than
+  `measure_source_empirical`: the two size proofs that version carries in
+  its *statement* (`Hus`, `Hlog`) are gone, because the length is in the
+  type. Takes **no** `te_size` hypothesis — its conclusion quotes no rate,
+  so a size hypothesis would be one the proof never uses.
+- **`measure_source_emp_lln`** (`TypedExp.v`, 2026-10-07) — the weak law
+  stated about the **program's own output**: the frequency of `v` among the
+  N+1 logged values is within `eps` of `dmap g (P n) v` except with
+  probability at most `V / ((te_size te) · eps²)`. This is where `te_size`
+  earns its keep — the pre-registered size sets the rate, and dropping
+  `Hsz` makes the statement false, so the field is load-bearing rather than
+  bookkeeping. Proved from `measure_source_lln` by one rewrite through
+  `emp_rV_sum_iid`: no new probability theory. Axioms: boolp's three only.
 - **New probability machinery** (`Prob.v`), none of which infotheo ships:
   - `emp` / `empE` — the empirical distribution of a sample list
     (`fdist_uniform` is uniform over a whole finType, not over a multiset).
@@ -314,6 +353,17 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
     every unit then tabulating.** This is what makes a concrete run
     comparable with an abstract pushforward.
   - `count_partition`, `sum_count_size` — the counting lemmas underneath.
+  - `emp_rV` / `emp_rV_map` / `emp_rVE` (2026-10-07) — the same thing for a
+    length-**indexed** sample, which is the version that can be drawn at
+    random. Defined as the pushforward of the uniform law on **indices**
+    rather than by counting, which makes `emp_rV_map` two lines out of
+    `dmap_comp` where the list version needed `count_partition`. `emp` and
+    its counting lemmas are now used only by `measure_source_empirical`,
+    and are retirable if that theorem is superseded by the `_rV` one.
+  - `emp_rV_sum_iid` (2026-10-07) — **the bridge to `wlln`:** the empirical
+    frequency of one value *is* the normalised sum of indicators the weak
+    law averages. The only real new proof in the sample layer; everything
+    else there is restatement.
   - `sum_iidE` — the sum of *n* iid copies of an ARBITRARY random variable
     with its `\=sum` derivation; infotheo only instantiates this for one
     specific RV (`aep.v`'s `sum_mlog_prod`). This is the missing ingredient
@@ -439,6 +489,16 @@ Proposed order (dates are suggestions — adjust with supervisor):
   step. **This is the first fragment of the general pushforward story**
   (M4c): a parent-free node already shows the shape "law of the logged
   value = `dmap` (what the mechanism does) (the exogenous law)".
+- **M5b** ✅ 2026-10-07 — **the sample layer** (D13): `te_size` on
+  `texperiment`, `sample`/`fdist_sample`/`log_sample`/`emp_freq`, plus
+  `emp_rV` and the bridge `emp_rV_sum_iid` in `Prob.v`, and the two laws
+  restated about the program's own output
+  (`measure_source_empirical_rV`, `measure_source_emp_lln`). The protocol
+  still contains **one** `TMeasure n`; the `\row_i` in `log_sample` runs
+  that one-op program at each of the N units. See Status above.
+  *Still open here:* the LLN remains **per-value** — covering all of
+  `dom n` needs a union bound costing `#|dom n|` — and `Var(X_v) = p(1−p)
+  ≤ ¼` is still left abstract.
 - **M4c** (next) — **distribution semantics of a program**: the distributional
   layer attaches to `abs_state`, not to logs (the log is the *concrete*
   output). `Randomize n` is surgery on the exogenous law (substitute the coin
