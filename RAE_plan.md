@@ -140,6 +140,8 @@ Decisions taken 2026-09-23:
 
 | D14 | **2026-10-20: dataset columns are addressed by node with an `is_measured` TICKET** (`dataset te N := forall n, is_measured te n -> 'rV[dom n]_N`), mirroring `parent_view`'s `is_parent` ticket | *Alt:* a total `{dffun forall n : Node G, 'rV[dom n]_N}`. That IS a finType, so it would carry a law (`R.-fdist (dataset N)`), which the ticketed version cannot — a function out of a `Prop` is not enumerable. Rejected anyway, because **the dataset does not need its own law**: a dataset is a deterministic function of the sample, and every probabilistic statement here is already phrased over `fdist_sample`. The concrete side holds DATA, the abstract side holds the law (`fdist_node`), and the two are compared through `emp_rV` — so the law lives where the randomness is and the dataset is free to be faithful instead of enumerable. The total version would hand back a column for a node the protocol never measured, returning `dec n 0` (via `log_val`'s `odflt 0`) — data that looks real and is not. Note this is the one place where a ticket was taken *over* a finType, the opposite of D13's call; the deciding question each time is whether the object needs to carry a distribution. |
 
+| D15 | **2026-10-20: the randomizer coin `d_n` is a PARAMETER of the distributional semantics**, abstract and universally quantified in theorems — not a field of `texperiment`, and not an argument of `TRandomize` | Confirms D6 against a proposal to fix `d_n := unif (dom n)`. Abstract wins three ways: it proves the strictly stronger theorem (correct for *any* coin independent of `U`, with uniform a one-line corollary), it covers unequal allocation (2:1), and it avoids `dunif`'s nonemptiness obligation `#|dom n| = m.+1`. *Alt 1:* a `te_coin` field — but it would have to be total over all nodes, so most entries are junk, and (unlike `te_size`, D13) **no theorem needs to READ it**: a theorem only needs to *substitute* it, which instantiation already does. That is the test D13 applied, with the opposite answer. *Alt 2:* put it on the operation, `TRandomize n d` — the most faithful (each randomization names its own coin) but it parameterises the whole typed-operation layer by `R`, which is currently `R`-free. Available later if protocols must record their allocation. **Consequence found while proving `rct2_correct`:** at the one-experiment level no law-surgery operation is needed at all, because the theorem is general in `P` — so "⟦Randomize n⟧ substitutes `d_n` at `U_n`" is just instantiation. A law-level operation becomes necessary only for a compositional runner over the op list (M4c), and hoisting the surgery before sampling is sound **only because `measures_last` forces all surgery to precede all measurement** — it would break under `If` (M8). |
+
 **Finite sample space is not a finite population.** `R.-fdist A` requires
 the *sample space* `A` to be a finType — for us `context dom`, the set of
 possible exogenous draws, finite because every node has a finite domain
@@ -164,9 +166,36 @@ initial value only.
 
 Still open (bring to supervisor):
 - **Elaboration correctness**: nothing yet connects `elab tF` running under
-  `find_value` back to what `tF` *means* on typed values. Needs **range closure**
-  of `enc` (`enc (dec m) = m` for in-range `m`), which `encK` does not give.
-  Until then `solve` is "whatever dsep-core computes, decoded".
+  `find_value` back to what `tF` *means* on typed values at a node WITH
+  parents, so `solve` there is still "whatever dsep-core computes, decoded".
+  Target: `solve F w n = F n (w n) (fun p _ => solve F w p)`.
+  **Diagnosis (2026-10-20): the obstacle is the POSITIONAL ↔ KEYED parent
+  correspondence, not the coding.**
+  - dsep-core hands a mechanism its parents' values as a **list in
+    `find_parents` order**; `elab` reads a parent **by node**, resolving it
+    through `index p (find_parents n G)`. Nothing proves the two agree, and
+    that is the whole gap — bookkeeping about dsep-core's internals.
+  - dsep-core already supplies most of it:
+    `find_values_preserves_index` (`FindValue.v:1213`) is the positional
+    half by name, `find_values_get_assigned` (`FindValue.v:870`) the keyed
+    half. What remains is a ~10-line positional lemma about
+    `get_parent_assignments` (its i-th entry is the keyed read of the i-th
+    parent), plus dependent funext, already in the axiom set.
+  - **Range closure is not involved**, contrary to how this entry read
+    before. As a blanket property `enc n (dec n m) = m` is false (`dec` is
+    total on `nat` while `enc`'s range is finite: `t2n (n2t 7) = 1 ≠ 7`),
+    and restricted to in-range `m` it is free (`m = enc v` ⟹ `dec m = v` by
+    `encK` ⟹ `enc (dec m) = m`). Neither version is needed: `elab`'s parent
+    view hands the mechanism `dec p ⟨p's positional slot⟩`, and
+    `solve F w p` **is** `dec p (eval at p)` by definition, so once the
+    slot is known to hold `eval at p` the two sides are *definitionally*
+    equal. All the arithmetic is `encK` twice — n's own noise and the outer
+    `enc` — which is why `Rct2.v`'s `rct2_R` is nothing but
+    `rewrite !enc_2K`.
+  - **No induction on the graph is expected.**
+    `find_value_gives_value_of_node` already unfolds one step at *every*
+    node independently, and the fixpoint equation needs `solve p` only
+    *named*, not computed.
 - **Zero-probability conditioning** (dormant while D11 is deferred):
   conditioning needs positive mass, and unlike the `Measure`-on-`None`
   partiality that is *not* eliminable by well-formedness — it depends on the
@@ -383,6 +412,16 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
     list-based `measure_source_empirical` that was its only consumer. Two
     parallel implementations of one idea, and the list one could not be
     drawn from. ~90 lines deleted.
+  - `fdist_context_pair` (2026-10-20) — the **joint** marginal at two
+    DISTINCT nodes is the product of the marginals: the two-node version of
+    `fdist_context_marginal`, and the lemma any two-node query needs. Same
+    proof shape (one indicator per node, dependent distributivity, the rest
+    sums to 1); distinctness is what stops the two isolated factors
+    colliding.
+  - `dmap_uncurry_prod` (2026-10-20) — pushing a two-argument function
+    through a PRODUCT law equals drawing the first argument and then
+    pushing the second. The monadic shape of independence, and what turns a
+    pushforward along a function of two nodes into a **mixture**.
   - `emp_rV_sum_iid` (2026-10-07) — **the bridge to `wlln`:** the empirical
     frequency of one value *is* the normalised sum of indicators the weak
     law averages. The only real new proof in the sample layer; everything
@@ -406,6 +445,66 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   recorded); and `Unset Strict Implicit` makes a binder implicit when it
   appears in the **return** type too, not only in a later binder's type, so
   `log_dataset`'s only explicit argument is `s`.
+- **The two-node randomized trial** (`Experiment/Rct2.v`, 2026-10-20) — the
+  smallest thing that is actually an experiment: `G2 = T -> R`, protocol
+  `[TRandomize T; TMeasure R]`, response table `h` arbitrary. Five results:
+  `rct2_T`, `rct2_R` (the solve), `log_val_rct2`, `rct2_log_law` (the
+  logged law) and **`rct2_correct`**:
+  `fdist_log_val … r2 = dbind (P t2) (fun t => dmap (h t) (P r2))`.
+  Axioms: boolp's three only. Two things it establishes:
+  - **Evidence that the elaboration-correctness induction works.** R has a
+    parent, so `rct2_R` is the induction STEP done by hand — and its entire
+    arithmetic is `rewrite !enc_2K`. T's code round-trips `enc → dec` once
+    as a *parent* value, R's noise once, and **range closure never
+    arises**. See the revised "still open" entry below.
+  - **The mixture is the RCT content.** `rct2_log_law` (the plain
+    pushforward) would be true of *any* protocol; `rct2_correct`
+    factorises it into a coin-mixture, which is what randomization buys —
+    T's value is independent of R's noise. T is deliberately given a
+    *biased* natural mechanism (everyone gets placebo) and it does **not**
+    appear in the conclusion: randomization erased it. This is the
+    two-node instance of Theorem A's shape.
+  *Gotchas:* `enc_2`'s node argument silently becomes implicit (it appears
+  in the *return* type), so the definitions are wrapped in
+  `Unset Implicit Arguments` as `Prob.v` does for its section variables;
+  and `case: (altP (i =P x))` already resolves the cased condition, so the
+  `eqxx`/`negbTE` rewrites one expects are absent.
+- **The confounded randomized trial** (`Experiment/Rct3.v`, 2026-10-20) —
+  the case randomization exists for. Reuses Main.v's `G_3`
+  (`Z -> X`, `Z -> Y`, `X -> Y`) with all of `Prob.v`'s domains, codes and
+  `tF_3`, and compares **two protocols on one model**:
+  - `rct3_correct` — under `[TRandomize x3; TMeasure y3]` the outcome law
+    is `dbind (P x3) (fun t => dmap (h3 t) (P z3))`, a mixture over a
+    treatment law that no longer depends on Z.
+  - `obs3_log_law` — under `[TMeasure y3]` alone it is
+    `dmap (fun a : age => h3 (bias a) a) (P z3)`: **a function of the
+    confounder alone.** Z fixes the treatment which fixes the response, so
+    there is no treatment law left to mix over — that missing degree of
+    freedom *is* the bias.
+  - **`rct3_differs_from_obs3`** — the two laws are DIFFERENT at `P_3`,
+    witnessed at `worse` (mass `1/3` vs `0`). So randomizing is not a
+    no-op and the confounding was real. The mechanism is sharp: `worse`
+    arises only from *placebo + old*, and the confounded mechanism treats
+    exactly the old, so observationally no unit can be both.
+  Axioms: boolp's three only. Three things it adds beyond `Rct2.v`:
+  - **The two-parent lookup is finally exercised.**
+    `find_parents 2 G3 = [1;3]`, so the keyed reads `pa x3` / `pa z3` must
+    resolve to positions 0 and 1. `Rct2.v`'s parent lists had one element,
+    where any lookup discipline would have worked.
+  - **A three-deep solve** (`obs3_Y`: Z -> X -> Y with X genuinely reading
+    Z), and it still went through on `rewrite !enc_3K` alone. See the
+    revised elaboration-correctness entry.
+  - **The first theorem in the development that computes a number**
+    (`rct3_P3_worse = 3^-1`). It works only because it touches `P_3`'s
+    components (`dret`, `dunif`) and never routes through
+    `to_assign`/`enum`.
+  *Caveat on the instance:* at `P_3` the law at X's slot is `dret placebo`
+  (a point mass, inherited from the model where X ignored its noise), so
+  the trial being separated is **degenerate** — after randomization every
+  unit gets placebo. The separation is genuine, and the degeneracy sharpens
+  it, but this is not an illustration of a *balanced* trial.
+  `rct3_correct` is general in `P`, so a balanced coin is one
+  instantiation away.
 - **`randomize_semantic_do`** (`Correctness.v`) — per-world core of Theorem A
   for Randomize, proved, no admits. Survives the reframe verbatim (it is a
   statement about `find_value`, not about the experiment record). Now read as:
@@ -546,7 +645,19 @@ Proposed order (dates are suggestions — adjust with supervisor):
   joint observation a real indexed read. Closes the "finite log type"
   item that M5b listed as outstanding. Also `fdist_node`, naming the
   abstract program's per-node law. See Status above.
-- **M4c** (next) — **distribution semantics of a program**: the distributional
+- **M5d** ✅ 2026-10-20 — **two worked trials** (`Rct2.v`, `Rct3.v`, D15).
+  `Rct2.v`: the two-node trial `T -> R` — first experiment with a node that
+  has a parent, first *mixture* conclusion. `Rct3.v`: the confounded trial
+  on `G_3` — two-parent positional lookup, a three-deep solve, and
+  `rct3_differs_from_obs3` showing randomizing changes the law. Supporting
+  general lemmas `fdist_context_pair` and `dmap_uncurry_prod` in `Prob.v`.
+  See Status above.
+- **M5e** (next) — **general elaboration correctness**: prove
+  `solve F w n = F n (w n) (fun p _ => solve F w p)`, generalising
+  `measure_source_law` off parent-free nodes. Per the rediagnosis above the
+  work is the positional↔keyed parent lookup, not the coding; `Rct2.v` is
+  the depth-2 case where that lookup holds by computation.
+- **M4c** — **distribution semantics of a program**: the distributional
   layer attaches to `abs_state`, not to logs (the log is the *concrete*
   output). `Randomize n` is surgery on the exogenous law (substitute the coin
   `d_n` at `U_n`); `Intervene` is surgery on the mechanism. Output: the
@@ -620,6 +731,13 @@ The d-separations a DAG entails, checked against data to falsify the model; reus
   - `Experiment/TypedExp.v` — the typed experiment surface (D12):
     `toperation`/`elab_op`, `texperiment`/`elab_exp`, and the transfer
     lemmas (`elab_op_wf`, `measures_last_elab`, `elab_exp_wf`).
+  - `Experiment/Rct2.v` — the two-node randomized trial worked end to end
+    (`G2`, `tF_2`, `te_rct2`, `rct2_correct`); the depth-2 case of
+    elaboration correctness.
+  - `Experiment/Rct3.v` — the CONFOUNDED trial on `G_3`: `te_rct3` vs
+    `te_obs3` on one model, `rct3_correct` / `obs3_log_law`, and
+    `rct3_differs_from_obs3`. Depth-3 solve, two-parent lookup, and the
+    only numeric computation in the development.
   - `Experiment/Correctness.v` — per-world core (`randomize_semantic_do`), RCT syntactic correctness; later Theorems A and B.
   - `attic/` — retired prototypes, not in `_CoqProject` (`Spike.v`).
   - `examples/` — encodings of historical/natural experiments (future).

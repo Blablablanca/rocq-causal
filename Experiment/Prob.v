@@ -62,6 +62,32 @@ Lemma dmap_comp {R : realType} {A B C : finType}
   dmap g (dmap f P) = dmap (g \o f) P.
 Proof. by rewrite /dmap fdistmap_comp. Qed.
 
+(* Pushing a two-argument function through a PRODUCT law is the same as
+   drawing the first argument and then pushing the second: the product
+   really is "draw independently".  This is the monadic shape of
+   independence, and it is what turns a pushforward along a function of two
+   nodes into a MIXTURE over the first one. *)
+Section UncurryProd.
+Import GRing.Theory Num.Theory.
+Local Open Scope ring_scope.
+Context {R : realType}.
+Variables (A B C : finType).
+
+Lemma dmap_uncurry_prod (Pa : R.-fdist A) (Pb : R.-fdist B) (F : A -> B -> C) :
+  dmap (fun ab : A * B => F ab.1 ab.2) (Pa `x Pb)
+  = dbind Pa (fun a => dmap (F a) Pb).
+Proof.
+apply/fdist_ext => c.
+transitivity (\sum_(a : A) \sum_(b : B) (if F a b == c then Pa a * Pb b else 0)).
+  rewrite [RHS]pair_bigA /= /dmap fdistmapE big_mkcond /=.
+  by apply: eq_bigr => ab _; rewrite inE fdist_prodE.
+rewrite /dbind fdistbindE; apply: eq_bigr => a _.
+rewrite /dmap fdistmapE big_distrr /= -big_mkcond /=.
+by apply: eq_bigl => b; rewrite inE.
+Qed.
+
+End UncurryProd.
+
 (* --- n iid copies of one random variable ------------------------------ *)
 (* infotheo ships the n-fold-sum relation [\=sum] and the weak law [wlln],
    but only ever instantiates the sum for one specific random variable
@@ -790,6 +816,50 @@ rewrite (bigD1 n) //= eqxx /= [X in _ * X]big1 ?mulr1; last first.
 under eq_bigr do rewrite mulr_natl mulrb.
 rewrite -big_mkcond /= (big_pred1 v) // => j /=.
 by rewrite eq_Tagged.
+Qed.
+
+(* The JOINT marginal at two DISTINCT nodes is the product of the two
+   marginals -- the two-node version of [fdist_context_marginal], and the
+   lemma any two-node query needs.  Same proof shape: insert an indicator
+   at each of the two nodes as an extra factor, exchange sum and product by
+   the dependent distributivity law, and then every factor except those two
+   sums to 1.  Distinctness is what keeps the two isolated factors from
+   colliding. *)
+Lemma fdist_context_pair (x y : Node G) : x != y ->
+  dmap (fun w : context dom => (w x, w y)) fdist_context
+  = (P x) `x (P y).
+Proof.
+move=> Hxy; apply/fdist_ext => v; case: v => v1 v2.
+rewrite /dmap fdistmapE fdist_prodE /=.
+transitivity (\sum_(w : context dom) \prod_(m : Node G)
+    ((if m == x then (Tagged dom (w m) == Tagged dom v1)%:R else 1)
+     * (if m == y then (Tagged dom (w m) == Tagged dom v2)%:R else 1)
+     * P m (w m))).
+  rewrite big_mkcond /=; apply: eq_bigr => w _; rewrite inE /=.
+  rewrite !big_split /= -!big_mkcond /= !big_pred1_eq !eq_Tagged /=.
+  rewrite fdist_contextE xpair_eqE.
+  by rewrite -natrM mulnb mulr_natl mulrb.
+rewrite -(bigA_distr_big_dffun j0 (fun m (j : dom m) =>
+  (if m == x then (Tagged dom j == Tagged dom v1)%:R else 1)
+  * (if m == y then (Tagged dom j == Tagged dom v2)%:R else 1)
+  * P m j)) /=.
+transitivity (\prod_(i : Node G)
+   (if i == x then P x v1 else if i == y then P y v2 else 1)).
+  apply: eq_bigr => i _.
+  case: (altP (i =P x)) => [->|Hix].
+    rewrite (negbTE Hxy) /=.
+    under eq_bigr do rewrite mulr1 mulr_natl mulrb.
+    rewrite -big_mkcond /= (big_pred1 v1) // => j /=.
+    by rewrite eq_Tagged.
+  case: (altP (i =P y)) => [->|Hiy].
+    under eq_bigr do rewrite mul1r mulr_natl mulrb.
+    rewrite -big_mkcond /= (big_pred1 v2) // => j /=.
+    by rewrite eq_Tagged.
+  under eq_bigr do rewrite !mul1r.
+  exact: FDist.f1.
+have Hyx : y != x by rewrite eq_sym.
+rewrite (bigD1 x) //= eqxx (bigD1 y) //= (negbTE Hyx) eqxx.
+by rewrite big1 ?mulr1 // => i /andP[/negbTE -> /negbTE ->].
 Qed.
 
 End ContextDist.
