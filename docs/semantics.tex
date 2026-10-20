@@ -1,0 +1,881 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,citecolor=black,urlcolor=blue!50!black}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\theoremstyle{plain}
+\newtheorem{theorem}[definition]{Theorem}
+\newtheorem{lemma}[definition]{Lemma}
+\newtheorem{corollary}[definition]{Corollary}
+\theoremstyle{remark}
+\newtheorem{remark}[definition]{Remark}
+
+% --- notation ---
+\newcommand{\Node}{\mathsf{Node}}
+\newcommand{\pa}{\mathrm{pa}}
+\newcommand{\dom}{\mathcal{D}}
+\newcommand{\Ctx}{\mathcal{U}}         % contexts (exogenous)
+\newcommand{\Wld}{\mathcal{W}}         % worlds (endogenous)
+\newcommand{\pv}{\Pi}                  % parent view
+\newcommand{\solve}{\mathsf{solve}}
+\newcommand{\enc}{\mathsf{enc}}
+\newcommand{\dect}{\mathsf{dec}}
+\newcommand{\elab}{\mathsf{elab}}
+\newcommand{\fv}{\mathsf{find\_value}}
+\newcommand{\ev}{\mathsf{eval}}
+\newcommand{\Dist}[1]{\Delta(#1)}      % distributions on a finite type
+\newcommand{\push}[1]{{#1}_{*}}        % pushforward
+\newcommand{\Smp}{\mathcal{S}}         % samples
+\newcommand{\emp}[1]{\widehat{#1}}
+\newcommand{\logv}{\mathsf{log}}
+\newcommand{\Ind}[1]{\mathbf{1}_{#1}}
+\newcommand{\Ex}{\mathbb{E}}
+\newcommand{\Var}{\mathbb{V}}
+\renewcommand{\Pr}{\mathrm{Pr}}
+\newcommand{\id}{\mathrm{id}}
+\newcommand{\dsep}{\perp\!\!\!\perp}
+\providecommand{\llbracket}{[\![}
+\providecommand{\rrbracket}{]\!]}
+
+\title{\textbf{Experiments as Programs over Causal Models}\\[2mm]
+\large A formalised denotational and operational semantics, with
+static design-checking as an application}
+\author{}
+\date{20 October 2026 --- state of the Rocq development}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We formalise a scientific experiment as a program that transforms a causal
+model. The development carries \emph{two} semantics for the same language:
+an \emph{abstract} (population-level) semantics, in which a model denotes a
+distribution over solved node values and an experiment transforms that
+distribution; and a \emph{concrete} (per-unit, finite-sample) semantics, in
+which a protocol is run on each of $N$ sampled units and produces a dataset.
+The mathematical content of the project is the relation between these two
+semantics. Deciding whether an experimental design is \emph{correct} ---
+whether its post-experiment graph identifies the target causal query --- is
+then a decidable syntactic check, justified by soundness against the
+semantics; it is an application of the semantics rather than the object of
+study. This document records the definitions and the theorems proved so
+far, in mathematical rather than Rocq notation, together with their proofs
+and an explicit account of what is \emph{not} yet proved.
+\end{abstract}
+
+\tableofcontents
+
+\section{Overview}
+
+The development has three layers.
+
+\begin{enumerate}
+\item \textbf{A causal model} is a pair $\langle G, F\rangle$: a DAG $G$
+      (the \emph{syntax} --- who may depend on whom) together with a family
+      of mechanisms $F$ (the \emph{semantics} --- how), glued by an invariant
+      saying that $F$ reads only the parents $G$ declares. Its denotation is
+      a distribution over node values, obtained by pushing a law on the
+      \emph{unobservables} forward along a deterministic solve. This is
+      Pearl's structural-causal-model form: all randomness up front, then
+      solve.
+\item \textbf{An experiment} is a protocol: a list of operations
+      (\emph{intervene}, \emph{randomize}, \emph{measure}) applied to a
+      model. It has the two semantics described above.
+\item \textbf{A design check} is a decidable predicate on the
+      post-experiment graph (e.g.\ the back-door criterion). Each check
+      comes with a semantic counterpart and a correspondence theorem.
+\end{enumerate}
+
+Everything is finite: all node domains are finite types, so distributions
+are finitely-supported and the probability layer is
+\texttt{infotheo}'s \texttt{fdist} over an abstract real closed field.
+Consequences of that choice, and where it bites, are discussed in
+\S\ref{sec:limits}.
+
+Throughout, $\Dist{A}$ denotes the finitely-supported distributions on a
+finite type $A$, and $\push{f}\mu$ denotes the pushforward of $\mu$ along
+$f$, i.e.\ $(\push{f}\mu)(b) = \sum_{a\,:\,f(a)=b}\mu(a)$.
+
+\section{Preliminaries: graphs, nodes, domains}
+
+\begin{definition}[Graph, nodes]
+A graph $G=(V,E)$ has a node list $V$ and an edge list $E$. We write
+$\Node(G)$ for the finite type of nodes of $G$ (formally the subtype of
+elements of $V$, which makes it a finite type and lets us form dependent
+products over it), and $\pa(n)$ for the list of declared parents of $n$,
+in edge-list order. We write $N$ for $\Node(G)$ when $G$ is fixed.
+\end{definition}
+
+The underlying causal engine (the read-only \texttt{dsep-core} library) is
+$\mathbb{N}$-valued: its solver $\fv$ computes with natural numbers. The
+typed layer we build on top is \emph{not}; the two are bridged by an
+encoding, which is the subject of \S\ref{sec:elab}.
+
+\begin{definition}[Domains, codes]
+A \emph{domain family} is a map $\dom : N \to \mathbf{FinType}$, assigning
+each node its own finite value space. A \emph{coding} is a pair of families
+\[
+  \enc_n : \dom_n \to \mathbb{N},
+  \qquad
+  \dect_n : \mathbb{N} \to \dom_n,
+  \qquad
+  \dect_n \circ \enc_n = \id .
+\]
+Note that only this one direction is assumed. The reverse,
+$\enc_n(\dect_n(m)) = m$ for in-range $m$ (\emph{range closure}), is
+\emph{not} available, and its absence is exactly what limits
+Theorem~\ref{thm:solvesource} to parent-free nodes; see
+\S\ref{sec:limits}.
+\end{definition}
+
+\begin{remark}[Noise space $=$ value space]
+Node $n$'s exogenous slot is taken to have the same type $\dom_n$ as its
+value. This is natural because a source node simply takes its unobservable
+as its value, so the two spaces must agree there anyway. It is a genuine
+restriction: it forbids $|U_n| \neq |\dom_n|$, so principal strata (say a
+four-valued compliance type behind a binary outcome) are out of reach until
+noise domains are given their own family and codes.
+\end{remark}
+
+\section{The causal model}
+
+\subsection{Mechanisms address parents by node}
+
+\begin{definition}[Parent view]
+The \emph{parent view} of $n$ is the type
+\[
+  \pv_n \;=\; \prod_{p \,:\, N} \bigl(\, p \in \pa(n) \;\to\; \dom_p \,\bigr),
+\]
+a lookup function that answers for exactly those nodes it can be
+\emph{proved} are declared parents, returning a value in that parent's own
+domain.
+\end{definition}
+
+The membership proof is a ticket: no ticket, no read. This is a deliberate
+design choice with two consequences. First, parents are addressed by
+\emph{node}, never by position, so re-spelling the same DAG (reordering its
+edge list) cannot silently change what a mechanism means --- with a
+positional interface it can, and the type checker only notices when the
+parents' domains happen to differ. Second, ``a mechanism reads only
+declared parents'' becomes structural rather than a proof obligation: a
+mechanism cannot even \emph{mention} a non-parent, because it could not
+supply the ticket.
+
+\begin{definition}[Mechanism]
+A \emph{typed mechanism} at $n$ is a function
+$F_n : \dom_n \times \pv_n \to \dom_n$, taking $n$'s own noise and a parent
+view to $n$'s value. A \emph{typed mechanism family} is $F = (F_n)_{n:N}$.
+\end{definition}
+
+\subsection{Contexts and worlds}
+
+The vocabulary is kept strictly separate, because the two spaces mean
+different things even though under the simplification above they have the
+same shape.
+
+\begin{definition}[Context, world]
+A \emph{context} is one experimental unit's complete draw of the
+unobservables,
+\[
+  \Ctx \;=\; \prod_{n\,:\,N} \dom_n ,
+\]
+and a \emph{world} $\Wld$ is the endogenous outcome: every node's
+\emph{solved} value. Both are dependent products over a finite type, hence
+finite types, so both can carry distributions.
+\end{definition}
+
+All randomness lives in the context and nowhere else; the mechanisms are
+deterministic, so a world is a function of a context.
+
+\subsection{Elaboration and the solve}
+\label{sec:elab}
+
+\begin{definition}[Elaboration]
+$\elab(F)$ is the $\mathbb{N}$-valued mechanism family
+\[
+  \elab(F)(n)\,(u, \vec{v})
+  \;=\;
+  \enc_n\Bigl(F_n\bigl(\dect_n(u),\;
+      \lambda p.\, \dect_p(\vec v\,[\,\mathrm{idx}(p,\pa(n))\,])\bigr)\Bigr),
+\]
+where $\mathrm{idx}(p,\pa(n))$ locates $p$ in $n$'s parent list, so a
+keyed read is resolved into the positional interface the engine expects.
+Nodes outside $G$ keep the engine's default behaviour.
+\end{definition}
+
+\begin{lemma}[Elaboration is compatible]
+$\elab(F)$ reads only the parents $G$ declares.
+\end{lemma}
+
+\begin{proof}
+Every read a mechanism can perform is at a declared parent, whose index
+into $\pa(n)$ is therefore in range; the engine's positional agreement
+hypothesis covers exactly the in-range positions. The ticket discipline of
+$\pv_n$ is what makes this hold by construction rather than by inspection
+of $F$.
+\end{proof}
+
+\begin{definition}[Solve]
+Writing $\lceil w \rceil$ for the $\mathbb N$-coded form of a context $w$,
+\[
+  \solve_F(w)(n) \;=\; \dect_n\bigl(\ev(G,\elab(F),n,\lceil w\rceil)\bigr)
+  \;\in\; \dom_n ,
+\]
+where $\ev$ is the engine's total solver. The whole world determined by $w$
+is $\mathsf{world\_of}_F(w) = \lambda n.\,\solve_F(w)(n)$.
+\end{definition}
+
+$\ev$ is total by packaging the engine's existence theorem: under
+well-formedness and acyclicity, a \emph{complete} exogenous assignment
+assigns every node a value. A typed context is complete (every node has a
+slot), so the default branch of $\ev$ is provably dead code --- it is not a
+clamp, and $\solve$ names an actual solution rather than a fallback.
+
+\section{The abstract (population) semantics}
+
+\subsection{The exogenous law}
+
+\begin{definition}[Exogenous law]
+Given a per-node family $P = (P_n)$ with $P_n \in \Dist{\dom_n}$, the joint
+law on contexts is the product
+\[
+  P_\Ctx(w) \;=\; \prod_{n\,:\,N} P_n(w_n).
+\]
+\end{definition}
+
+The product form \emph{is} the assumption that the exogenous variables are
+mutually independent. It is the initial law only: conditioning on an event
+about solved values would pull back to a non-product event on contexts, so
+after a selection step the unobservables are in general dependent --- that
+is not a defect, it is selection bias.
+
+\begin{lemma}[Marginal of the product]
+\label{lem:ctxmarg}
+$\push{(\lambda w.\,w_n)} P_\Ctx = P_n$.
+\end{lemma}
+
+\begin{proof}
+Write the indicator $[w_n = v]$ as an extra factor of the product, so that
+the mass at $v$ becomes a single sum over contexts of a product over nodes.
+Exchange the sum and the product using a \emph{dependent} distributivity
+law
+\[
+  \prod_{i} \sum_{j\,:\,J_i} f(i,j)
+  \;=\;
+  \sum_{g \,\in\, \prod_i J_i} \prod_i f(i, g(i)),
+\]
+which is proved by transporting the dependent function space into the
+tagged sum $\{i\,\&\,J_i\}$, where the standard non-dependent
+distributivity applies. Then every factor except the one at $n$ sums to
+$1$, and the factor at $n$ retains the indicator.
+\end{proof}
+
+\begin{remark}
+\texttt{infotheo} ships only the \emph{homogeneous} product ($N$ copies of
+one law, over row vectors). A context is a \emph{heterogeneous} dependent
+product, so the dependent distributivity law above had to be proved.
+\end{remark}
+
+\subsection{The induced laws}
+
+\begin{definition}[World law, node law]
+\[
+  \llbracket \langle G,F\rangle \rrbracket (P)
+  \;=\;
+  \push{(\mathsf{world\_of}_F)} P_\Ctx
+  \;\in\; \Dist{\Wld},
+  \qquad
+  \llbracket n \rrbracket (P)
+  \;=\;
+  \push{(\lambda w.\, \solve_F(w)(n))} P_\Ctx .
+\]
+We write $\mathsf{fdist\_world}$ and $\mathsf{fdist\_node}(n)$ for these.
+\end{definition}
+
+No new randomness is introduced here and none can be: the denotation is a
+pushforward of the exogenous law along a deterministic map. The node law
+is the abstract program's \emph{per-node output}, and it is what a causal
+query ranges over.
+
+\begin{lemma}[Two routes to the node law]
+$\push{(\lambda v.\, v_n)}\,\mathsf{fdist\_world} = \mathsf{fdist\_node}(n)$.
+\end{lemma}
+
+\begin{proof}
+Both sides are pushforwards of $P_\Ctx$; compose the two maps on the left
+and observe the composite is pointwise equal to
+$\lambda w.\,\solve_F(w)(n)$, then use that pushforward respects pointwise
+equality of maps.
+\end{proof}
+
+Contrast Lemma~\ref{lem:ctxmarg}: that one recovers a node's \emph{noise}
+law and holds by construction, whereas this one has to run the mechanisms.
+Only at a source node do the two coincide.
+
+\section{The experiment language}
+
+\begin{definition}[Operations, protocol]
+\[
+  \mathsf{op} \;::=\;
+  \mathsf{Intervene}(n,v) \;\mid\;
+  \mathsf{Randomize}(n) \;\mid\;
+  \mathsf{Measure}(n),
+\]
+and a \emph{protocol} is a list of operations. The three span what an
+experimenter can do to a causal model and what they can see from it:
+intervening and randomizing are \emph{doing} (both cut $n$ from its
+parents), measuring is \emph{seeing}. A fourth mode, \emph{selecting}
+(inclusion criteria, stratification, loss to follow-up), is deliberately
+absent: it is conditioning rather than surgery, it acts on the population
+rather than on a unit, and it breaks the product form of the exogenous
+law.
+\end{definition}
+
+\begin{definition}[Experiment]
+An experiment is a record $\langle \text{labels}, F, \text{ops}, N \rangle$:
+node labels (marking treatments, responses, and unmeasurable nodes), a
+mechanism family, a protocol, and a declared \emph{sample size} $N$.
+\end{definition}
+
+The sample size is a hyperparameter of the design, not data: it says how
+many units the protocol draws, never which ones. It is recorded because a
+trial's sample size is pre-registered --- fixed before any data exists,
+exactly like the choice of which node to randomize.
+
+\subsection{Well-formedness, and the ordering discipline}
+
+Well-formedness of an experiment asks that the graph be a well-formed
+acyclic DAG with treatments and responses, that every node read be
+measurable, that mechanisms be compatible with the DAG (free, by
+elaboration), and that no surgery follow a measurement.
+
+That last clause deserves a word. Intervening and randomizing rewrite the
+mechanism, so $\mathsf{Measure}(n)$ reads a different value before and
+after them; but the abstract layer has no temporal resolution, since
+measuring changes neither the graph nor the law. A protocol measuring a
+node both before and after surgery would therefore have two concrete
+values and only one abstract law. Forbidding surgery after a measurement
+rules this out and keeps the two layers in agreement. It is sound but
+crude: measuring a node that no later surgery can affect is harmless, so a
+descendant-based condition would be strictly more permissive.
+
+\subsection{The concrete per-unit semantics}
+
+\begin{definition}[Per-unit run]
+A unit state is a pair (current mechanism family, log), where a log is a
+list of (node, value) pairs. One operation acts by
+\[
+\begin{aligned}
+  \mathsf{Intervene}(n,v) &: \quad f_n := \text{const } v, &&\text{log unchanged},\\
+  \mathsf{Randomize}(n)   &: \quad f_n := \text{read } U_n, &&\text{log unchanged},\\
+  \mathsf{Measure}(n)     &: \quad \text{mechanism unchanged}, &&\text{append } (n, \ev(\dots,n,U)).
+\end{aligned}
+\]
+Running a protocol is the fold of this over the operation list, starting
+from the initial mechanism and the empty log.
+\end{definition}
+
+Randomization uses a \emph{shadow encoding}: the randomized node reads its
+own exogenous slot, and the experimenter's fresh draw is written into that
+slot. This matches the mechanism the engine already has, and it fits the
+``all randomness up front, then one deterministic solve'' form of the
+denotation. The price is that ``randomize equals $\mathrm{do}$'' becomes a
+theorem rather than a definition --- Theorem~\ref{thm:randdo}.
+
+\begin{definition}[Logged value]
+For an experiment $e$, a context $w$ and a node $n$,
+\[
+  \logv(e,w,n) \;=\; \dect_n\bigl(\,\text{the entry for } n \text{ in the log of } e \text{ run on } w\,\bigr)
+  \;\in\; \dom_n ,
+\]
+reading an absent entry as the code $0$. Its law across the population is
+$\;\mathsf{fdist\_log}(e,n) = \push{(\lambda w.\,\logv(e,w,n))} P_\Ctx$.
+\end{definition}
+
+A logged \emph{value} lands in a finite type, where a whole \emph{log} does
+not (a log is a list), which is why the per-node reading is what can carry
+a distribution. \S\ref{sec:dataset} gives the multi-node version.
+
+\section{The concrete (finite-sample) semantics}
+
+\subsection{Samples must be length-indexed}
+
+\begin{definition}[Sample, sampling law]
+A \emph{sample} of size $N$ is a length-indexed vector of contexts,
+$\Smp_N = \Ctx^N$, and its law is
+\[
+  P_{\Smp_N} \;=\; P_\Ctx^{\otimes N}.
+\]
+\end{definition}
+
+The length must live in the \emph{type}, and this is forced rather than
+stylistic. The statement we want --- that an empirical distribution is
+close to the true one --- is a claim about the probability that a
+\emph{randomly drawn} sample lands close, so the randomness ranges over
+samples and samples must carry a law; and a distribution needs a finite
+sample space, which a type of lists is not. Consequently there is no single
+space of all samples, only a family indexed by $N$: the sample size is
+needed in order to \emph{name the space the probability is on}, before the
+statement can be written down.
+
+\begin{remark}[Two independence assumptions, now distinct]
+$P_{\Smp_N} = \bigl(\bigotimes_n P_n\bigr)^{\otimes N}$ is a product
+twice over, and the two products are different claims from different
+sources: the inner product over \emph{nodes} is a modelling assumption
+about the causal model, the outer product over \emph{units} is a design
+assumption about how the sample was drawn (i.i.d.). Naming
+$P_{\Smp_N}$ separates them.
+\end{remark}
+
+\subsection{The empirical distribution}
+
+\begin{definition}[Empirical distribution]
+For $s \in A^{N+1}$,
+\[
+  \emp{s} \;=\; \push{(\lambda i.\, s_i)}\,\mathrm{Unif}(\{0,\dots,N\})
+  \;\in\; \Dist{A},
+  \qquad\text{so}\qquad
+  \emp{s}(v) = \frac{\#\{\,i : s_i = v\,\}}{N+1}.
+\]
+\end{definition}
+
+Defining it as a pushforward of the uniform law on \emph{indices}, rather
+than by counting, is what makes Lemma~\ref{lem:empmap} immediate.
+
+\begin{lemma}[Tabulating commutes with mapping]
+\label{lem:empmap}
+For $f : A \to B$ and $s \in A^{N+1}$, \;
+$\emp{\langle f(s_i)\rangle_i} = \push{f}\,\emp{s}$.
+\end{lemma}
+
+\begin{proof}
+Both sides are pushforwards of the uniform law on indices;
+$\lambda i.\,f(s_i)$ is the composite of $f$ with $\lambda i.\,s_i$, so
+functoriality of the pushforward gives the claim.
+\end{proof}
+
+This is the lemma that makes a concrete run comparable with an abstract
+pushforward: tabulating a sample and then pushing it through $f$ is the
+same as running $f$ on every unit and then tabulating.
+
+\begin{lemma}[The empirical distribution lives on a grid]
+\label{lem:grid}
+For $s \in A^{N+1}$ and $v \in A$ there is $k \le N+1$ with
+$\emp{s}(v) = k/(N+1)$.
+\end{lemma}
+
+\begin{proof}
+Take $k = \#\{i : s_i = v\}$ and apply the counting form above; $k \le N+1$
+because a subset of the index type has at most as many elements as the
+index type.
+\end{proof}
+
+Lemma~\ref{lem:grid} is the reason an \emph{exact} agreement theorem can
+only ever be a warm-up; see the discussion after
+Theorem~\ref{thm:exact}.
+
+\subsection{Running the protocol on the whole sample}
+\label{sec:dataset}
+
+\begin{definition}[Column, dataset]
+For an experiment $e$, a node $n$ and a sample $s \in \Smp_N$, the
+\emph{column} at $n$ is
+\[
+  \mathsf{col}(e,n,s) \;=\; \bigl\langle\, \logv(e, s_i, n) \,\bigr\rangle_{i < N}
+  \;\in\; \dom_n^{\,N},
+\]
+and the \emph{dataset} is the family of columns at the measured nodes,
+\[
+  \mathsf{data}(e,s) \;=\; \lambda n.\,\lambda (\text{proof that } e \text{ measures } n).\;
+  \mathsf{col}(e,n,s).
+\]
+\end{definition}
+
+The protocol still contains exactly \emph{one} $\mathsf{Measure}(n)$; the
+indexed family is what runs that one-operation program at each of the $N$
+units. Measuring $N$ units is not expressible by repeating the operation,
+since a run consumes one context, so $N$ copies of $\mathsf{Measure}(n)$
+would log one unit's value $N$ times. The sample therefore belongs in the
+semantics, not in the operation list.
+
+Columns are addressed by node with a ``$e$ measures $n$'' ticket, exactly
+as mechanisms address parents: no ticket, no read, so a node the protocol
+never measured is \emph{unaskable} rather than answered with the junk value
+$\dect_n(0)$ that an absent log entry would produce.
+
+What having all columns together buys is \emph{joint} observation: unit
+$i$'s pair of readings at two measured nodes $x,y$ is
+$\bigl(\mathsf{data}(e,s)(x)_i,\ \mathsf{data}(e,s)(y)_i\bigr)$, indexed by
+a genuine $i < N$, so the pairing cannot drift. A per-node marginal cannot
+express a joint, and a joint is what a query such as $P(R \mid do(T))$
+requires.
+
+\begin{remark}
+A ticketed family is a function out of a proposition, hence not a finite
+type, so the dataset cannot itself carry a distribution. This costs
+nothing here: a dataset is a \emph{deterministic function of the sample},
+and every probabilistic statement below is phrased over $P_{\Smp_N}$. The
+concrete side holds data, the abstract side holds the law, and the two are
+compared through $\emp{\cdot}$ --- so the law lives where the randomness
+is, and the dataset is free to be faithful rather than enumerable.
+\end{remark}
+
+\section{Theorems}
+
+\subsection{Elaboration correctness at a source node}
+
+\begin{theorem}[Parent-free nodes solve to what their mechanism says]
+\label{thm:solvesource}
+Let $G$ be well-formed and acyclic, let $\pa(n) = \varnothing$, and suppose
+$n$'s mechanism is \emph{parent-free}: $F_n(u,\pi) = g(u)$ for some
+$g : \dom_n \to \dom_n$ and all $u,\pi$. Then for every context $w$,
+\[
+  \solve_F(w)(n) \;=\; g(w_n).
+\]
+\end{theorem}
+
+\begin{proof}
+By the engine's existence theorem, under well-formedness, acyclicity and a
+complete exogenous assignment, $\fv$ computes $n$'s value from its own
+slot and its parents' values. At $n$ the parent list is empty, and reading
+$n$'s slot out of the coded context returns exactly $\enc_n(w_n)$ (the
+read-after-write property of the coding bridge, which holds because node
+identifiers are distinct). Unfolding $\elab$ at $n$ gives
+\[
+  \enc_n\bigl(F_n(\dect_n(\enc_n(w_n)),\,\cdot\,)\bigr)
+  = \enc_n\bigl(F_n(w_n, \cdot)\bigr)
+  = \enc_n(g(w_n)),
+\]
+using $\dect_n \circ \enc_n = \id$ and then the hypothesis on $F_n$.
+Finally $\solve$ applies $\dect_n$ to this, and $\dect_n\circ\enc_n = \id$
+again.
+\end{proof}
+
+\begin{remark}
+This is the first proved instance of elaboration correctness --- the first
+place where the solver is shown to compute what the typed mechanism
+\emph{says}, rather than merely something total. It works because the value
+round-trips $\enc \to \dect \to \enc \to \dect$, so every step is the
+available cancellation; it never needs range closure
+$\enc_n(\dect_n(m)) = m$, which is what blocks the general statement.
+
+Note also that $g$ is not a restriction. With $\pa(n)=\varnothing$ the type
+$\pv_n$ has essentially one inhabitant, so \emph{every} mechanism at $n$ is
+already parent-independent; $g$ merely has to be named in order to say what
+the answer is.
+\end{remark}
+
+\subsection{The experiment-level law}
+
+\begin{theorem}[Law of the logged value]
+\label{thm:law}
+Under the hypotheses of Theorem~\ref{thm:solvesource}, for an experiment
+$e$ whose protocol is exactly $[\mathsf{Measure}(n)]$,
+\[
+  \mathsf{fdist\_log}(e,n) \;=\; \push{g}\,P_n .
+\]
+\end{theorem}
+
+\begin{proof}
+Because the protocol consists of the single operation
+$\mathsf{Measure}(n)$, the log has one entry, keyed by $n$, and reading it
+back gives $\solve_F(w)(n)$; hence
+$\logv(e,w,n) = \solve_F(w)(n) = g(w_n)$ by
+Theorem~\ref{thm:solvesource}. So
+\[
+  \mathsf{fdist\_log}(e,n)
+  = \push{(\lambda w.\,g(w_n))} P_\Ctx
+  = \push{g}\,\push{(\lambda w.\,w_n)} P_\Ctx
+  = \push{g}\, P_n,
+\]
+by functoriality of the pushforward and then Lemma~\ref{lem:ctxmarg}.
+\end{proof}
+
+\begin{corollary}[``Hello world'': a pure echo logs the noise law]
+If $F_n(u,\pi) = u$ then $\mathsf{fdist\_log}(e,n) = P_n$.
+\end{corollary}
+
+\begin{proof}
+The case $g = \id$ of Theorem~\ref{thm:law}, with
+$\push{\id}\mu = \mu$.
+\end{proof}
+
+Theorem~\ref{thm:law} is the end-to-end smoke test of the entire stack ---
+coding, the context bridge, the engine's solver, the total evaluator, the
+per-unit runner, the product law --- and it is an \emph{exact equality of
+laws}, not a limit statement. It is also the first fragment of the general
+pushforward story: a parent-free node already exhibits the shape ``law of
+the logged value $=$ pushforward of the exogenous law along what the
+mechanism does''.
+
+\subsection{Exact agreement on a representative sample}
+
+\begin{theorem}[Exact-sample law]
+\label{thm:exact}
+Under the hypotheses of Theorem~\ref{thm:law}, for a sample
+$s \in \Smp_{N+1}$ that is \emph{representative}, i.e.\
+$\emp{s} = P_\Ctx$,
+\[
+  \emp{\mathsf{col}(e,n,s)} \;=\; \push{g}\, P_n .
+\]
+\end{theorem}
+
+\begin{proof}
+The column is $\langle \logv(e,s_i,n)\rangle_i$, so by
+Lemma~\ref{lem:empmap}
+\[
+  \emp{\mathsf{col}(e,n,s)}
+  = \push{(\lambda w.\,\logv(e,w,n))}\,\emp{s}
+  = \push{(\lambda w.\,\logv(e,w,n))}\,P_\Ctx,
+\]
+using representativeness, and the right-hand side is
+$\mathsf{fdist\_log}(e,n) = \push{g}P_n$ by Theorem~\ref{thm:law}.
+\end{proof}
+
+This is the honest form of ``exhaustive'': the sample is assumed to carry
+the right law, and the assumption is \emph{stated} rather than assumed
+away. Everything in sight is finite --- there are no limits anywhere.
+
+\begin{remark}[Why this is a warm-up and not the result]
+\label{rem:warmup}
+The representativeness premise silently restricts $P$. By
+Lemma~\ref{lem:grid} an empirical distribution takes only values
+$k/(N+1)$, so $\emp{s} = P_\Ctx$ is satisfiable only when every value of
+$P_\Ctx$ is rational with denominator dividing $N+1$. Against an
+irrational truth the theorem is vacuous. Moreover no choice of number
+field repairs this: even with rational probabilities a real sample is not
+exactly representative --- drawing $400$ units from a population with
+$p = 1/3$ cannot give exactly $400/3$ successes. For irrational $p$ the
+error is bounded \emph{below} by $p$'s distance to the grid, which is
+positive. An $\varepsilon$-bound is therefore not a weakening adopted for
+convenience; it is the only shape of theorem available. That is
+\S\ref{sec:lln}.
+\end{remark}
+
+\subsection{A weak law of large numbers for the outcome}
+\label{sec:lln}
+
+Fix a value $v \in \dom_n$ and let $A_v \subseteq \Ctx$ be the event that a
+unit logs $v$,
+$A_v = \{\,w : \logv(e,w,n) = v\,\}$, with indicator $\Ind{A_v}$.
+
+\begin{lemma}[The indicator's mean is the outcome law]
+\label{lem:eind}
+Under the hypotheses of Theorem~\ref{thm:law},
+$\;\Ex_{P_\Ctx}\bigl[\Ind{A_v}\bigr] = (\push{g}P_n)(v)$.
+\end{lemma}
+
+\begin{proof}
+The mean of an indicator is the probability of its event, and
+$P_\Ctx(A_v)$ is by definition the mass that
+$\push{(\lambda w.\,\logv(e,w,n))}P_\Ctx = \mathsf{fdist\_log}(e,n)$
+assigns to $v$; apply Theorem~\ref{thm:law}.
+\end{proof}
+
+\begin{lemma}[The empirical frequency is the averaged indicator]
+\label{lem:bridge}
+For $f : A \to B$, $v \in B$ and $s \in A^{N+1}$,
+\[
+  \emp{\langle f(s_i)\rangle_i}(v)
+  \;=\;
+  \frac{1}{N+1}\sum_{i<N+1} \Ind{\{a\,:\,f(a)=v\}}(s_i).
+\]
+\end{lemma}
+
+\begin{proof}
+Both sides count the indices at which $f(s_i) = v$ and divide by $N+1$: the
+left by the counting form of $\emp{\cdot}$, the right by splitting the sum
+on the predicate $f(s_i) = v$, where the complementary part contributes
+zero.
+\end{proof}
+
+Lemma~\ref{lem:bridge} is the bridge that makes a statement about the
+program's output a statement the weak law can act on, with no new
+probability theory required.
+
+\begin{theorem}[Weak law for the measured outcome]
+\label{thm:lln}
+Under the hypotheses of Theorem~\ref{thm:law}, if the experiment declares
+sample size $N+1$ and $\varepsilon > 0$, then
+\[
+  \Pr_{\,s \,\sim\, P_{\Smp_{N+1}}}
+  \Bigl[\;
+     \bigl|\;\emp{\mathsf{col}(e,n,s)}(v) \;-\; (\push{g}P_n)(v)\;\bigr|
+     \;\ge\; \varepsilon
+  \;\Bigr]
+  \;\le\;
+  \frac{\Var_{P_\Ctx}\bigl[\Ind{A_v}\bigr]}{(N+1)\,\varepsilon^{2}} .
+\]
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:bridge} the quantity inside the probability is the
+average of $N+1$ independent copies of $\Ind{A_v}$, minus its mean --- the
+mean being $(\push{g}P_n)(v)$ by Lemma~\ref{lem:eind}. Chebyshev's
+inequality applied to that average, whose variance is
+$\Var[\Ind{A_v}]/(N+1)$, gives the bound. Formally this instantiates the
+library's weak law, whose hypotheses are that the summands are i.i.d.\
+copies with common mean and common variance; the sum-decomposition
+obligation is discharged by a generic ``sum of $n$ i.i.d.\ copies of an
+arbitrary random variable'' construction, which the library did not
+provide (it instantiates the relation only for one specific variable in its
+asymptotic-equipartition development).
+\end{proof}
+
+Three things are worth emphasising about the shape of
+Theorem~\ref{thm:lln}.
+
+\begin{itemize}
+\item \textbf{It is a finite-$N$ bound, not a limit.} This is what makes it
+      provable in this setting at all: distributions here are
+      finitely-supported, so the infinite product space that almost-sure
+      convergence requires is not expressible. A $1/N$ bound delivers
+      convergence in probability without ever mentioning a limit.
+\item \textbf{It carries no representativeness premise}, so unlike
+      Theorem~\ref{thm:exact} it is non-vacuous for arbitrary real-valued
+      $P$ (cf.\ Remark~\ref{rem:warmup}). The grid of
+      Lemma~\ref{lem:grid} has spacing $1/(N+1) \to 0$ while $\varepsilon$
+      stays positive, so there is always room; convergence never requires
+      hitting the limit.
+\item \textbf{The declared sample size sets the rate.} The bound quotes the
+      size recorded in the experiment, so the hypothesis tying it to $N+1$
+      is load-bearing: without it the statement would quote a size with no
+      relation to the sample at hand.
+\end{itemize}
+
+\subsection{The checker, and its soundness}
+
+The static design checks are the application layer. Each consists of a
+decidable predicate on the post-experiment graph, a semantic counterpart,
+and a correspondence theorem; what follows is the state of that layer.
+
+\begin{theorem}[Randomization is a $\mathrm{do}$, per unit]
+\label{thm:randdo}
+Let $G$ be well-formed and acyclic, let $n,w$ be nodes of $G$, and let $U$
+be a complete exogenous assignment. Then
+\[
+  \fv\bigl(G,\ \text{randomize } n \text{ in } F,\ w,\ (n\mapsto v)\cdot U\bigr)
+  \;=\;
+  \fv\bigl(\mathrm{do}(n)\,G,\ F[f_n := \text{const } v],\ w,\ U\bigr).
+\]
+\end{theorem}
+
+That is, the shadow encoding (write the draw into $n$'s exogenous slot and
+let $f_n$ read it) and the surgery encoding (cut $n$'s incoming edges and
+fix $f_n$ to the constant) compute the same value at every node. This is
+proved by induction along a topological order. It is the per-unit core of
+the adequacy theorem: the distributional statement is obtained by lifting
+it through the mixture over the coin, which is the next milestone.
+
+\begin{theorem}[Back-door correspondence]
+Under the standing graph hypotheses, with $R$ a node of $G$, $T \neq R$,
+$Z \subseteq V$ and $T, R \notin Z$,
+\[
+  \mathsf{syntactic\_backdoor}(G,T,R,Z) = \mathrm{true}
+  \iff
+  \mathsf{semantic\_backdoor}(G,T,R,Z),
+\]
+where the syntactic side asks that no element of $Z$ be a descendant of $T$
+and that $T$ and $R$ be $d$-separated by $Z$ in $G$ with $T$'s outgoing
+edges removed, and the semantic side replaces $d$-separation by its
+semantic counterpart.
+\end{theorem}
+
+This is the per-mechanism instance of the soundness direction: a decidable
+graph condition implies the corresponding independence. It is obtained from
+the underlying library's equivalence of $d$-separation and semantic
+separation; the conditioning set is deduplicated internally so that
+duplicate-freeness need not be assumed.
+
+\begin{theorem}[A randomized trial is syntactically correct]
+For the protocol ``randomize $T$, then measure $R$'', the post-experiment
+DAG is $\mathrm{do}(T)\,G$, in which $T$ is \emph{isolated}; hence the
+back-door criterion holds with $Z = \varnothing$.
+\end{theorem}
+
+\begin{proof}
+Randomizing $T$ removes $T$'s incoming edges, and the back-door
+mutilation removes its outgoing edges; so in the mutilated graph $T$ has no
+incident edges at all, and $d$-separation from $R$ with an empty
+conditioning set is immediate.
+\end{proof}
+
+The isolation argument is what makes this short. An earlier formulation
+introduced a fresh randomizer node feeding $T$, and the corresponding proof
+required an extensive adjacency analysis; keeping the node set fixed and
+reading randomization as surgery on the existing node replaced that with
+three small lemmas.
+
+\section{What is not proved}
+\label{sec:limits}
+
+Stated plainly, so that the scope of the above is not overread.
+
+\begin{description}
+\item[General elaboration correctness.] Theorem~\ref{thm:solvesource}
+  covers parent-free nodes only. The general statement --- that the solver
+  computes what a typed mechanism means at \emph{every} node --- needs
+  range closure $\enc_n(\dect_n(m)) = m$ for in-range $m$, which the
+  assumed cancellation does not provide. Until it exists, $\solve$ at a
+  node with parents is ``whatever the engine computes, decoded'' rather
+  than provably ``what the mechanism says''.
+
+\item[Adequacy (Theorem A).] Theorem~\ref{thm:randdo} is the per-unit
+  core; the distributional lift --- that the compositional population
+  semantics agrees with ``run each unit and push forward'' --- is not yet
+  proved. This is the main outstanding result, and it is what transfers
+  the believability of the small operational semantics to the
+  reasoning-friendly denotational one.
+
+\item[Identification (Theorem B, distributional).] That the log of a
+  randomized trial identifies $P(R \mid do(T))$ is not yet proved. It needs
+  the coin to have full support (overlap) and to be independent of
+  confounders --- both hold for a randomized trial by construction, and
+  uniformity is \emph{not} required.
+
+\item[The weak law is per-value.] Theorem~\ref{thm:lln} fixes one
+  $v \in \dom_n$. A statement about the whole distribution needs a union
+  bound, at a cost of a factor $|\dom_n|$.
+
+\item[The variance is left abstract.] $\Var[\Ind{A_v}] = p(1-p) \le 1/4$ is
+  not computed, so the bound is stated in terms of a variance rather than
+  a constant.
+
+\item[Nothing downstream of the context bridge computes.] The bridge
+  enumerates the node type, and that enumeration does not reduce, so
+  per-node laws can be \emph{stated} but not \emph{evaluated}. This is not
+  a defect for a specification layer, but it does mean the development is
+  not a simulator.
+
+\item[Selection is absent.] Conditioning on measured values would require
+  positive mass --- a side condition that well-formedness cannot discharge,
+  since it depends on the numbers --- and it destroys the product form of
+  the exogenous law. The design was worked out and deliberately deferred.
+
+\item[Continuous outcomes.] Finiteness of the sample space is what the
+  whole probability layer rests on. A real-valued node must be discretised,
+  or the development must move to a measure-theoretic setting.
+
+\item[Scope of the language.] Treatments and responses are single nodes,
+  not vectors; the protocol is a straight-line list, so adaptive designs
+  and dynamic treatment regimes (which need branching on measured data)
+  are not expressible.
+\end{description}
+
+\section{Metatheory}
+
+Every theorem above is machine-checked in Rocq 9.1.0 against
+\texttt{mathcomp} 2.5.0 and \texttt{infotheo} 0.9.7, with no admitted
+statements. The axiom footprint is exactly the three classical axioms the
+underlying analysis library already assumes --- propositional
+extensionality, dependent functional extensionality, and constructive
+indefinite description --- and the development adds none of its own.
+
+\end{document}

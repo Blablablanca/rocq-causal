@@ -99,103 +99,29 @@ Qed.
 
 End SumIID.
 
-(* --- the empirical distribution of a sample --------------------------- *)
-(* infotheo has no "distribution of a list": [fdist_uniform] is uniform
-   over a whole finType, not over a multiset of draws.  This is it --
-   [emp s v] is the fraction of [s] equal to [v] -- together with the one
-   fact that makes it useful: taking the empirical distribution COMMUTES
-   with applying a function.  That is what lets a concrete run over a
-   sample be compared with an abstract pushforward. *)
-Section Empirical.
-Import GRing.Theory Num.Theory.
-Local Open Scope ring_scope.
-Context {R : realType}.
-Variable A : finType.
-Variables (N : nat) (s : list A).
-Hypothesis Hs : size s = N.+1.
-
-(* each element of A is counted once per occurrence, so the counts total
-   the sample size *)
-Lemma sum_count_size (l : list A) : (\sum_(v : A) count (pred1 v) l = size l)%N.
-Proof.
-elim: l => [|a l IH] /=; first by apply: big1.
-rewrite big_split /= IH.
-have -> : (\sum_(v : A) nat_of_bool (a == v) = 1)%N.
-  by rewrite (bigD1 a) //= eqxx big1 ?addn0 // => i /negbTE; rewrite eq_sym => ->.
-by rewrite add1n.
-Qed.
-
-Let ef : {ffun A -> R} :=
-  [ffun v => (count (pred1 v) s)%:R / (size s)%:R].
-
-Let ef0 v : 0 <= ef v.
-Proof. by rewrite ffunE divr_ge0 // ler0n. Qed.
-
-Let ef1 : \sum_(v in A) ef v = 1.
-Proof.
-under eq_bigr do rewrite ffunE.
-rewrite -big_distrl /= -natr_sum sum_count_size Hs divff //.
-by rewrite pnatr_eq0.
-Qed.
-
-Definition emp : R.-fdist A := locked (FDist.make ef0 ef1).
-
-Lemma empE v : emp v = (count (pred1 v) s)%:R / (size s)%:R.
-Proof. by rewrite /emp; unlock; rewrite ffunE. Qed.
-
-End Empirical.
-
-Section EmpiricalMap.
-Import GRing.Theory Num.Theory.
-Local Open Scope ring_scope.
-Context {R : realType}.
-Variables (A B : finType).
-
-(* a count over a finType splits into the counts of its fibres *)
-Lemma count_partition (p : A -> bool) (l : list A) :
-  (count p l = \sum_(a : A | p a) count (pred1 a) l)%N.
-Proof.
-elim: l => [|x l IH] /=; first by symmetry; apply: big1.
-rewrite big_split /= -IH; congr (_ + _)%N.
-case Hx : (p x).
-- rewrite (bigD1 x) //= eqxx big1 ?addn0 //.
-  by move=> i /andP[_ Hi]; rewrite eq_sym; move/negbTE: Hi => ->.
-- symmetry; apply: big1 => a Ha; case: eqP => // Hxa.
-  by move: Hx; rewrite Hxa Ha.
-Qed.
-
-(* THE COMMUTATION: tabulating a sample and then pushing it through [f] is
-   the same as running [f] on every unit and tabulating the results. *)
-Lemma emp_map (N : nat) (l : list A) (HN : size l = N.+1)
-    (f : A -> B) (HM : size (map f l) = N.+1) :
-  @emp R B N (map f l) HM = dmap f (@emp R A N l HN).
-Proof.
-apply/fdist_ext => b.
-rewrite empE /dmap fdistmapE size_map HN.
-rewrite count_map (count_partition (fun a => f a == b) l).
-rewrite natr_sum big_distrl /=.
-by apply: eq_bigr => a _; rewrite empE HN.
-Qed.
-
-End EmpiricalMap.
-
 (* --- the empirical distribution of a length-INDEXED sample ------------ *)
-(* [emp] above tabulates a [list], whose length is data.  A sample whose
-   length is data cannot carry a LAW: [R.-fdist A] needs [A : finType], and
-   [list A] is not one.  But "the empirical distribution converges to the
-   true one" is a claim about the probability that a RANDOMLY DRAWN sample
-   lands close, so the randomness ranges over samples and samples must have
-   a law.  Hence this version: [emp_rV s] tabulates a row vector, whose
-   length is in its TYPE.  There is accordingly no single space of all
-   samples, only a family indexed by the length -- which is exactly why a
-   sample size has to be fixed before the probability can even be named.
+(* infotheo has no "distribution of a sample": [fdist_uniform] is uniform
+   over a whole finType, not over a multiset of draws.  This is it --
+   [emp_rV s v] is the fraction of [s] equal to [v].
 
-   Defining it as the pushforward of the uniform law on INDICES rather than
-   by counting is what makes [emp_rV_map] fall out of [dmap_comp] in two
-   lines, where the list version needed [count_partition].  [emp_rVE] is
-   the counting form, and the two agree.  [emp_rV_sum_iid] is the link to
-   [wlln]: the empirical frequency of one value IS the normalised sum of
-   indicators that the weak law averages. *)
+   The sample is a ROW VECTOR, not a list, and that is forced.  A list's
+   length is data, and a type whose values have varying length cannot carry
+   a LAW: [R.-fdist A] needs [A : finType], and [list A] is not one.  But
+   "the empirical distribution converges to the true one" is a claim about
+   the probability that a RANDOMLY DRAWN sample lands close, so the
+   randomness ranges over samples and samples must have a law.  A row
+   vector carries its length in its TYPE, so it does.  There is accordingly
+   no single space of all samples, only a family indexed by the length --
+   which is exactly why a sample size has to be fixed before the
+   probability can even be named.
+
+   Defining [emp_rV] as the pushforward of the uniform law on INDICES
+   rather than by counting is what makes [emp_rV_map] -- the one fact that
+   makes it useful, that tabulating COMMUTES with applying a function --
+   fall out of [dmap_comp] in two lines; by counting it needs a partition
+   argument.  [emp_rVE] is the counting form, and the two agree.
+   [emp_rV_sum_iid] is the link to [wlln]: the empirical frequency of one
+   value IS the normalised sum of indicators that the weak law averages. *)
 Section EmpRV.
 Import GRing.Theory Num.Theory.
 Local Open Scope ring_scope.
@@ -207,7 +133,7 @@ Definition emp_rV (A : finType) (N : nat) (s : 'rV[A]_N.+1) : R.-fdist A :=
   dmap (fun i : 'I_N.+1 => s ``_ i) (dunif (card_ord N.+1)).
 
 (* tabulating a sample and then pushing it through [f] is the same as
-   running [f] on every unit and tabulating -- [emp_map], for free *)
+   running [f] on every unit and tabulating -- for free, by [dmap_comp] *)
 Lemma emp_rV_map (A B : finType) (N : nat) (f : A -> B) (s : 'rV[A]_N.+1) :
   emp_rV (\row_i f (s ``_ i)) = dmap f (emp_rV s).
 Proof.
@@ -223,6 +149,32 @@ rewrite /emp_rV /dmap fdistmapE.
 under eq_bigr do rewrite /dunif fdist_uniformE card_ord.
 rewrite sumr_const mulr_natl; congr (_ *+ _).
 by apply/eq_card => i; rewrite !inE.
+Qed.
+
+(* The empirical distribution can only land on the GRID of spacing 1/(N+1):
+   it is a count over a fixed denominator, so its range is rational however
+   real-valued the true law is.  Stated as "equals [k/(N+1)] for some
+   [k <= N+1]" rather than "is rational", which is stronger (it pins the
+   denominator) and needs no rationality predicate on a [realType].
+
+   WHY THIS DOES NOT BLOCK CONVERGENCE.  An exact-equality claim is
+   impossible against an irrational truth [p]: the error is bounded BELOW by
+   [p]'s distance to the grid, which is positive.  So the hypothesis
+   [emp_rV _ = fdist_context P] in [measure_source_empirical_rV] is
+   satisfiable
+   only when P is rational with a denominator dividing N+1 -- a restriction
+   hiding in the premise rather than stated.  An [eps]-bound is therefore
+   not a weakening adopted for convenience, it is the only shape of theorem
+   available: [measure_source_lln] claims only that [|emp_rV - p|] is SMALL,
+   never zero, and since the grid spacing 1/(N+1) tends to 0 while [eps] is
+   held positive there is always room.  This is the honest reason the
+   exact-sample theorems are warm-ups and the weak law is the result. *)
+Lemma emp_rV_grid (A : finType) (N : nat) (s : 'rV[A]_N.+1) (v : A) :
+  exists k : nat, (k <= N.+1)%N /\ emp_rV s v = k%:R / N.+1%:R.
+Proof.
+exists #|[set i : 'I_N.+1 | s ``_ i == v]|; split; last exact: emp_rVE.
+apply: (@leq_trans #|'I_N.+1|); first exact: max_card.
+by rewrite card_ord.
 Qed.
 
 (* THE BRIDGE to the weak law: the empirical frequency of [v] in the mapped
@@ -857,12 +809,10 @@ End ContextDist.
 (* introduced here, and none can be: this is Main.v's M4 wrapping M2's    *)
 (* total solve in [fdistmap], exactly as its header anticipates.          *)
 (*                                                                        *)
-(* [fdist_world_marginal] is the lemma that makes the object usable: the  *)
-(* law of a single node's VALUE is the world law read at that node, which *)
-(* is the same as pushing [solve ^~ n] forward directly.  Note how this   *)
-(* differs from [fdist_context_marginal] in Part 5: that one recovers a   *)
-(* node's NOISE law and is true by construction, whereas this one has to  *)
-(* run the mechanisms.  Only at a source node do the two coincide.        *)
+(* [fdist_node] is what makes the object usable: the law of a SINGLE       *)
+(* node's value, which is what a causal query ranges over.                *)
+(* [fdist_world_marginal] proves the two routes to it agree -- read the   *)
+(* world law at that node, or push [solve ^~ n] forward directly.         *)
 (*                                                                        *)
 (* CAVEAT (unfinished business).  [fdist_world] is total and always       *)
 (* well defined, but it is only MEANINGFUL under well-formedness and      *)
@@ -899,13 +849,22 @@ Lemma fdist_worldE v :
   = \sum_(w in context dom | world_of enc dec tF w == v) fdist_context P w.
 Proof. by rewrite /fdist_world /dmap fdistmapE. Qed.
 
-(* the per-node outcome law: reading node n out of the world law is the
-   same as pushing n's solved value forward directly *)
+(* THE LAW OF ONE NODE'S VALUE -- the abstract program's per-node output,
+   and what a causal query actually ranges over.  The exogenous law pushed
+   forward along "solve for n": all the randomness is in the context, the
+   mechanisms are deterministic, so this is a [dmap] and nothing more. *)
+Definition fdist_node (n : Node G) : R.-fdist (dom n) :=
+  dmap (fun w : context dom => solve enc dec tF w n) (fdist_context P).
+
+(* the two routes to it agree: read node n out of the world law, or push
+   n's solved value forward directly.  Note how this differs from
+   [fdist_context_marginal] in Part 5 -- that one recovers a node's NOISE
+   law and holds by construction, whereas this one has to run the
+   mechanisms.  Only at a source node do the two coincide. *)
 Lemma fdist_world_marginal (n : Node G) :
-  dmap (fun v : world dom => v n) fdist_world
-  = dmap (fun w : context dom => solve enc dec tF w n) (fdist_context P).
+  dmap (fun v : world dom => v n) fdist_world = fdist_node n.
 Proof.
-rewrite /fdist_world dmap_comp; apply: dmap_eq => w.
+rewrite /fdist_world /fdist_node dmap_comp; apply: dmap_eq => w.
 by rewrite /= /world_of ffunE.
 Qed.
 

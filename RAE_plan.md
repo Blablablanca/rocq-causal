@@ -96,6 +96,16 @@ Static checks (backdoor etc.) read
 only `α M`, stay X-free and decidable, and quantify over mechanisms as
 `∀ M, structure M = G → …`.
 
+**Framing (settled 2026-10-20).** The project is *about the two semantics*;
+the syntactic checker is an **application** of them. The user runs the
+checker, but the checker proper is ~50 lines (`syntactic_backdoor`,
+`measures_last`, `twf_operation`) while the semantics and its proofs are a
+few thousand, and every hard theorem (Theorem A's adequacy, the pushforward
+story, the LLN chain) is semantics. This is the shape of a type system: a
+small checker, justified by a soundness proof against a large operational
+semantics. Consequence for priorities: build Theorem A (D8's "PL
+centerpiece") before adding further criteria to the checker.
+
 When `If` arrives there is no single post-experiment DAG (the model you end up
 with depends on measured data), so the abstract layer becomes a *sound
 over-approximation* (join of branch graphs). That is where abstract
@@ -126,7 +136,9 @@ Decisions taken 2026-09-23:
 | D12 | **A typed operation SURFACE that compiles down** (`toperation` + `elab_op` in `TypedExp.v`), not a retyped `Main.operation` | *Alt 1:* retype `operation` to carry `Node G`/`dom n`. Rejected on three counts: mathcomp would enter `Main.v` against the stated style boundary; the type must be graph-indexed, and after surgery `Node (remove_incoming n G)` is **not convertible** with `Node G` for abstract `G` (`nodes_in_graph (remove_incoming n G)` reduces to `fst G`, `nodes_in_graph G` is stuck), so the abstract layer would thread transports; and every proved theorem over operations needs rework. *Alt 2:* leave operations untyped — keeps `Intervene 1 1` and value-range errors as proof obligations. Compiling down mirrors `tgraphfun`/`elab` exactly, costs one elaboration tax already paid elsewhere, and makes **half of `wf_operation` structural**: a `Node G` cannot name a node outside `G`, so only the label obligations remain. |
 | D11 | **DEFERRED 2026-09-28 (supervisor): no `Filter` operation for now.** Design reached, kept for when it returns: `Filter (ns : nodes) (keep : assignments nat -> bool)` — read set separate from rule, because the read set *is* the conditioning set `Z` the d-separation checks consume; a bare `raw_context -> bool` would hide it and make selection bias invisible to them. `keep` takes an `assignments nat` (keyed access, consistent with D8). `abs_state` gained a `conditioned : nodes` field alongside `measured`. Costs that motivated deferring: `operation` loses decidable equality; the distributional semantics acquires a side condition (conditioning on a probability-zero event) that well-formedness cannot discharge; and it breaks the product form of the exogenous law (see below). Code recoverable from commit `0e80c37`. |
 
-| D13 | **2026-10-07: the sample SIZE is a field of the typed experiment (`te_size : nat` on `texperiment`); the sample itself is not.** The sample-level laws take a free `N`, with `te_size te = N.+1` linking it | *Alt 1:* N as a parameter of the denotation only, no field — the semantic functions (`sample`, `fdist_sample`, `log_sample`) take it, the record stays as it was. Cheapest option (zero churn, no consistency hypothesis, and a field nothing in `elab_exp` or the wf-checks *can* read), but rejected: the reason to record N is that a trial's sample size is pre-registered **design**, fixed before any data exists, exactly like the choice of which node to randomize. A protocol that does not state its N is not a protocol. *Alt 2:* `sample : list raw_context` on `Main.experiment` — the field D7 removed. Rejected twice over: it would not even work (`list` has no `fdist`, so it could not be what the LLN quantifies over, and the `'rV`-indexed sample would still be needed beside it), and it reinstates what D7 rejected. **D7 is not reversed by D13:** D7's field held the *units* and served as the input LAW (`uniform {u₁…uₙ}` — today's `emp`), so the same protocol over a second cohort was a different experiment. A size names no population: two cohorts of the same size give the *same* `texperiment`, and the population remains `fdist_context P`, which does not mention `te_size`. What `te_size` distinguishes is N = 400 from N = 1000, which is the point. Indeed the passage that removed `sample` promised exactly this layer — "finite-sample estimation returns later as a statistics layer on top (i.i.d. draws)". *Alt 3:* index the sample type by the field (`'rV[context dom]_(te_size te)`), so a size mismatch is caught by **typing**. Rejected for D12's reason: `te_size te` is stuck on an abstract `te`, so every use of a sample would carry a transport. The propositional link costs one hypothesis and no transports — and per the standing preference, robustness beats loudly-caught mistakes. |
+| D13 | **2026-10-07: the sample SIZE is a field of the typed experiment (`te_size : nat` on `texperiment`); the sample itself is not.** The sample-level laws take a free `N`, with `te_size te = N.+1` linking it | *Alt 1:* N as a parameter of the denotation only, no field — the semantic functions (`sample`, `fdist_sample`, `log_sample`) take it, the record stays as it was. Cheapest option (zero churn, no consistency hypothesis, and a field nothing in `elab_exp` or the wf-checks *can* read), but rejected: the reason to record N is that a trial's sample size is pre-registered **design**, fixed before any data exists, exactly like the choice of which node to randomize. A protocol that does not state its N is not a protocol. *Alt 2:* `sample : list raw_context` on `Main.experiment` — the field D7 removed. Rejected twice over: it would not even work (`list` has no `fdist`, so it could not be what the LLN quantifies over, and the `'rV`-indexed sample would still be needed beside it), and it reinstates what D7 rejected. **D7 is not reversed by D13:** D7's field held the *units* and served as the input LAW (`uniform {u₁…uₙ}` — an empirical distribution, today's `emp_rV`), so the same protocol over a second cohort was a different experiment. A size names no population: two cohorts of the same size give the *same* `texperiment`, and the population remains `fdist_context P`, which does not mention `te_size`. What `te_size` distinguishes is N = 400 from N = 1000, which is the point. Indeed the passage that removed `sample` promised exactly this layer — "finite-sample estimation returns later as a statistics layer on top (i.i.d. draws)". *Alt 3:* index the sample type by the field (`'rV[context dom]_(te_size te)`), so a size mismatch is caught by **typing**. Rejected for D12's reason: `te_size te` is stuck on an abstract `te`, so every use of a sample would carry a transport. The propositional link costs one hypothesis and no transports — and per the standing preference, robustness beats loudly-caught mistakes. |
+
+| D14 | **2026-10-20: dataset columns are addressed by node with an `is_measured` TICKET** (`dataset te N := forall n, is_measured te n -> 'rV[dom n]_N`), mirroring `parent_view`'s `is_parent` ticket | *Alt:* a total `{dffun forall n : Node G, 'rV[dom n]_N}`. That IS a finType, so it would carry a law (`R.-fdist (dataset N)`), which the ticketed version cannot — a function out of a `Prop` is not enumerable. Rejected anyway, because **the dataset does not need its own law**: a dataset is a deterministic function of the sample, and every probabilistic statement here is already phrased over `fdist_sample`. The concrete side holds DATA, the abstract side holds the law (`fdist_node`), and the two are compared through `emp_rV` — so the law lives where the randomness is and the dataset is free to be faithful instead of enumerable. The total version would hand back a column for a node the protocol never measured, returning `dec n 0` (via `log_val`'s `odflt 0`) — data that looks real and is not. Note this is the one place where a ticket was taken *over* a finType, the opposite of D13's call; the deciding question each time is whether the object needs to carry a distribution. |
 
 **Finite sample space is not a finite population.** `R.-fdist A` requires
 the *sample space* `A` to be a finType — for us `context dom`, the set of
@@ -287,20 +299,15 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   nothing. (With `find_parents = nil`, `parent_view n` has essentially one
   inhabitant, so every `tnodefun` at `n` is already `pa`-independent — `g`
   just has to be named to say what the answer is.)
-- **`measure_source_empirical`** (`TypedExp.v`) — the finite-sample
-  counterpart: run the protocol on every unit of a sample and tabulate, and
-  you recover the abstract law `dmap g (P n)`, given the sample is
-  representative (`emp us = fdist_context P`, stated rather than assumed
-  away — note `fdist_context P` is not uniform in general, so plain
-  enumeration only works in the uniform case).
 - **`measure_source_lln`** (`TypedExp.v`, 2026-09-30) — the weak law for the
   outcome: over N+1 independent units, the empirical frequency of a value
   `v` is within `eps` of `dmap g (P n) v` except with probability at most
   `V / ((N+1) eps^2)`. Finite-N Chebyshev, no limits — which is what makes
   it provable at all, since `fdist` is finite-support and the infinite
   product space almost-sure convergence needs is not expressible. Together
-  with `measure_source_law` (population) and `measure_source_empirical`
-  (exact sample) this is the full "concrete log → abstract law" story.
+  with `measure_source_law` (population) and
+  `measure_source_empirical_rV` (exact sample) this is the full
+  "concrete log → abstract law" story.
   Axioms: boolp's three only.
   *Gotcha worth remembering:* `` `E ``/`` `V `` need the codomain seen
   through an **lmodType**. Writing `{RV P -> R}` resolves `R`'s eqType via
@@ -327,17 +334,26 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
     be length-indexed. There is therefore no single space of all samples,
     only a family indexed by N, and N is needed to **name the space the
     probability is on** before the statement can exist. This is also the
-    reason `measure_source_empirical` must assume exact representativeness:
-    with a bare list there is nothing to take a probability over.
+    reason the exact-sample theorem must assume representativeness rather
+    than bound a deviation: with a bare list there is nothing to take a
+    probability over.
   - One thing the sample layer does *not* give: `log_sample` is node n's
     **column** of the dataset. The whole dataset (every measured node at
     once) still waits on the finite log type.
 - **`measure_source_empirical_rV`** (`TypedExp.v`, 2026-10-07) — the
-  exact-sample law on a length-indexed sample. Strictly cleaner than
-  `measure_source_empirical`: the two size proofs that version carries in
-  its *statement* (`Hus`, `Hlog`) are gone, because the length is in the
-  type. Takes **no** `te_size` hypothesis — its conclusion quotes no rate,
-  so a size hypothesis would be one the proof never uses.
+  exact-sample law on a length-indexed sample: run the protocol on every
+  unit, tabulate, and you recover `dmap g (P n)`, given the sample is
+  representative (`emp_rV s = fdist_context P`). No size proofs in the
+  statement — the length is in the type. Takes **no** `te_size` hypothesis
+  either: its conclusion quotes no rate, so a size hypothesis would be one
+  the proof never uses.
+  **Why this is a warm-up, not the result** (2026-10-14): the
+  representativeness premise silently restricts `P` to rationals with
+  denominator dividing N+1, since an empirical distribution can only land
+  on that grid (`emp_rV_grid`). Against an irrational truth it is vacuous.
+  `measure_source_emp_lln` carries no such premise — which is the honest
+  reason an `eps`-bound is not a weakening but the only available shape of
+  theorem.
 - **`measure_source_emp_lln`** (`TypedExp.v`, 2026-10-07) — the weak law
   stated about the **program's own output**: the frequency of `v` among the
   N+1 logged values is within `eps` of `dmap g (P n) v` except with
@@ -347,19 +363,26 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   bookkeeping. Proved from `measure_source_lln` by one rewrite through
   `emp_rV_sum_iid`: no new probability theory. Axioms: boolp's three only.
 - **New probability machinery** (`Prob.v`), none of which infotheo ships:
-  - `emp` / `empE` — the empirical distribution of a sample list
+  - `emp_rV` / `emp_rVE` — the empirical distribution of a sample
     (`fdist_uniform` is uniform over a whole finType, not over a multiset).
-  - `emp_map` — **tabulating then pushing through `f` = running `f` on
+    The sample is a **row vector**, not a list, and that is forced: a
+    list's length is data, so `list A` is no finType and cannot carry a
+    law. Defined as the pushforward of the uniform law on **indices**
+    rather than by counting.
+  - `emp_rV_map` — **tabulating then pushing through `f` = running `f` on
     every unit then tabulating.** This is what makes a concrete run
-    comparable with an abstract pushforward.
-  - `count_partition`, `sum_count_size` — the counting lemmas underneath.
-  - `emp_rV` / `emp_rV_map` / `emp_rVE` (2026-10-07) — the same thing for a
-    length-**indexed** sample, which is the version that can be drawn at
-    random. Defined as the pushforward of the uniform law on **indices**
-    rather than by counting, which makes `emp_rV_map` two lines out of
-    `dmap_comp` where the list version needed `count_partition`. `emp` and
-    its counting lemmas are now used only by `measure_source_empirical`,
-    and are retirable if that theorem is superseded by the `_rV` one.
+    comparable with an abstract pushforward, and the pushforward definition
+    gets it in two lines out of `dmap_comp`.
+  - `emp_rV_grid` (2026-10-14) — the empirical distribution can only land
+    on the grid of spacing `1/(N+1)`. Stated as "equals `k/(N+1)` for some
+    `k ≤ N+1`" rather than "is rational": stronger, and needs no
+    rationality predicate on a `realType`. This is what makes exact
+    representativeness unachievable against an irrational truth.
+  - *Retired 2026-10-14:* a list-based `emp`/`empE`/`emp_map` with
+    `count_partition`/`sum_count_size` underneath, together with the
+    list-based `measure_source_empirical` that was its only consumer. Two
+    parallel implementations of one idea, and the list one could not be
+    drawn from. ~90 lines deleted.
   - `emp_rV_sum_iid` (2026-10-07) — **the bridge to `wlln`:** the empirical
     frequency of one value *is* the normalised sum of indicators the weak
     law averages. The only real new proof in the sample layer; everything
@@ -369,6 +392,20 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
     specific RV (`aep.v`'s `sum_mlog_prod`). This is the missing ingredient
     for applying `wlln`.
 
+- **The dataset** (`TypedExp.v`, 2026-10-20, D14) — `tmeasured` /
+  `is_measured` (the nodes a protocol measures), `dataset`, `log_dataset`,
+  `joint_at`, `is_measured_single`, and `measure_source_dataset` (the
+  exact-sample law transferring to a dataset column — one line, since the
+  column *is* `log_sample`). This is the **finite log type** the plan had
+  been deferring, and what it unlocks is **joint** observation: `joint_at`
+  pairs two measured nodes at a real index `i : 'I_N`, so the pairing cannot
+  drift. A per-node marginal cannot express a joint, and a joint is what
+  `P(R | do(T))` needs.
+  *Two gotchas:* `seq (Node G)` does not typecheck (dsep-core shadows
+  mathcomp's `seq` with stdlib's range function — use `list`, as M1b already
+  recorded); and `Unset Strict Implicit` makes a binder implicit when it
+  appears in the **return** type too, not only in a later binder's type, so
+  `log_dataset`'s only explicit argument is `s`.
 - **`randomize_semantic_do`** (`Correctness.v`) — per-world core of Theorem A
   for Randomize, proved, no admits. Survives the reframe verbatim (it is a
   statement about `find_value`, not about the experiment record). Now read as:
@@ -399,7 +436,10 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   dependent distributivity lemma (`bigA_distr_big_dffun`) since infotheo ships
   only the homogeneous product.
 - **Induced law over worlds** (`Prob.v` Part 6) — `fdist_world = dmap world_of
-  (fdist_context P)`, with `fdist_world_marginal` for per-node outcome laws,
+  (fdist_context P)`, and `fdist_node n = dmap (solve ^~ n) (fdist_context P)`
+  (2026-10-20) — the abstract program's **per-node output**, which is what a
+  causal query ranges over; `fdist_world_marginal` proves the two routes to it
+  agree (read the world law at n, or push n's solved value forward directly),
   and `to_assign_complete` / `find_value_to_assign` proving a typed context is
   a *complete* exogenous assignment, so `eval`'s default is dead and `solve`
   names a real solution. Axioms: only boolp's three, already in the base.
@@ -481,8 +521,10 @@ Proposed order (dates are suggestions — adjust with supervisor):
   Worked typed RCT on G3 elaborating to `[Randomize 1; Measure 2]` by
   `reflexivity`, and `TIntervene x3 cured` rejected as a type error.
 - **M5a** ✅ 2026-09-30 — **hello-world theorems**: `measure_source_law`
-  (exact law equality) and `measure_source_empirical` (finite sample), plus
-  `solve_source`, `emp`/`emp_map` and `sum_iidE`. See Status above.
+  (exact law equality) and a finite-sample counterpart, plus `solve_source`
+  and `sum_iidE`. See Status above. (The finite-sample theorem and its
+  list-based `emp` were superseded by the `_rV` versions in M5b and
+  retired 2026-10-14.)
   Generalised 2026-10-03 from "mechanism = identity" to "mechanism is
   parent-free", i.e. `tF n u pa = g u` for arbitrary `g`; the laws became
   pushforwards `dmap g (P n)`. Cost: four signatures and one `dmap_comp`
@@ -499,6 +541,11 @@ Proposed order (dates are suggestions — adjust with supervisor):
   *Still open here:* the LLN remains **per-value** — covering all of
   `dom n` needs a union bound costing `#|dom n|` — and `Var(X_v) = p(1−p)
   ≤ ¼` is still left abstract.
+- **M5c** ✅ 2026-10-20 — **the dataset** (D14): every measured node's
+  column at once, ticketed by `is_measured`, with `joint_at` making unit i's
+  joint observation a real indexed read. Closes the "finite log type"
+  item that M5b listed as outstanding. Also `fdist_node`, naming the
+  abstract program's per-node law. See Status above.
 - **M4c** (next) — **distribution semantics of a program**: the distributional
   layer attaches to `abs_state`, not to logs (the log is the *concrete*
   output). `Randomize n` is surgery on the exogenous law (substitute the coin
@@ -517,8 +564,9 @@ Proposed order (dates are suggestions — adjust with supervisor):
   (reintroduces the explicit randomizer node); `examples/` of historical and
   natural experiments.
 
-**POPL SRC target** (late Oct / early Nov): the story "experiments as
-probabilistic programs — a verified RCT" needs M1–M6.
+**Target story**: "experiments as probabilistic programs — a verified RCT",
+which needs M1–M6. (A POPL SRC submission was the original target; dropped
+2026-10-12, so there is no external deadline driving the order.)
 
 ## Static analysis techniques for identifiability
 
@@ -554,10 +602,6 @@ The d-separations a DAG entails, checked against data to falsify the model; reus
 
 - Curate historical experiments; check the framework can express them.
 - Study natural experiments and simulate them in the framework (avoid the ill-defined "quasi-experiment" framing).
-
-## Deadlines
-
-- POPL Student Research Competition: submission typically end of October / early November.
 
 ## Repo Conventions (for Claude Code)
 

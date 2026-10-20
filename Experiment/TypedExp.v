@@ -113,6 +113,18 @@ Qed.
 Definition tis_surgery (op : toperation) : bool :=
   match op with TIntervene _ _ | TRandomize _ => true | _ => false end.
 
+(* the nodes a protocol measures, in program order.  These are the only
+   nodes a run can produce data for, so they index the dataset below. *)
+Fixpoint tmeasured (p : list toperation) : list (Node G) :=
+  match p with
+  | nil => nil
+  | op :: rest =>
+      match op with
+      | TMeasure n => n :: tmeasured rest
+      | _ => tmeasured rest
+      end
+  end.
+
 Definition tis_measure (op : toperation) : bool :=
   match op with TMeasure _ => true | _ => false end.
 
@@ -173,6 +185,11 @@ Record texperiment : Type := mk_texperiment {
   te_ops    : list toperation;
   te_size   : nat;              (* how many units the protocol runs on *)
 }.
+
+(* n is a node this protocol measures -- a computable test, so on a concrete
+   protocol the ticket below is discharged by [isT] *)
+Definition is_measured (te : texperiment) (n : Node G) : bool :=
+  n \in tmeasured (te_ops te).
 
 Definition te_aug (te : texperiment) : Main.aug_graph :=
   Main.mk_aug_graph G (te_labels te).
@@ -332,43 +349,9 @@ by rewrite /dmap fdistmap_id.
 Qed.
 
 (* ===================================================================== *)
-(* The concrete log over a sample vs the abstract law                    *)
-(* --------------------------------------------------------------------- *)
-(* [measure_source_law] is about the population law.  An experimenter     *)
-(* sees a finite sample, so here is the finite-sample counterpart: run    *)
-(* the protocol on every unit of [us], tabulate the logged values, and    *)
-(* you get back the abstract law [dmap g (P n)] -- PROVIDED [us] is       *)
-(* representative ([emp us = fdist_context P]).  That is the honest       *)
-(* form of "exhaustive": the sample already carries the right law, and it *)
-(* is stated rather than assumed away.                                    *)
-(*                                                                        *)
-(* The work is done by [Prob.emp_map]: tabulating and then pushing        *)
-(* through the protocol is the same as running the protocol on every unit *)
-(* and then tabulating.  Everything is finite -- no limits anywhere.      *)
-(* ===================================================================== *)
-
-Theorem measure_source_empirical (te : texperiment dom) (n : Node G)
-    (g : dom n -> dom n)
-    (N : nat) (us : list (context dom))
-    (Hus : size us = N.+1)
-    (Hlog : size (map (fun w => log_val (elab_exp enc dec te) w n) us) = N.+1) :
-  G_well_formed G = true ->
-  contains_cycle G = false ->
-  find_parents (ssval n) G = nil ->
-  te_ops te = @TMeasure G dom n :: nil ->
-  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
-  emp Hus = fdist_context P ->
-  emp Hlog = dmap g (P n).
-Proof.
-move=> Hwf Hcyc Hnp Hops Hmech Hrep.
-rewrite (emp_map Hus Hlog) Hrep.
-exact: measure_source_law.
-Qed.
-
-(* ===================================================================== *)
 (* Weak law of large numbers for the outcome                             *)
 (* --------------------------------------------------------------------- *)
-(* [measure_source_empirical] needs the sample to be EXACTLY              *)
+(* [measure_source_empirical_rV] (below) needs the sample to be EXACTLY   *)
 (* representative.  A real sample never is, so the honest question is how *)
 (* far off it can be.  Chebyshev answers it: for the indicator of a single *)
 (* outcome value [v], the empirical frequency over N+1 INDEPENDENT units  *)
@@ -486,13 +469,28 @@ Definition emp_freq (e : Main.experiment) (n : Node G) (v : dom n) (N : nat)
   : {RV (fdist_sample N.+1) -> R^o} :=
   fun s => emp_rV (log_sample e n s) v.
 
-(* The exact-sample law, restated on a length-indexed sample.  Note what is
-   no longer a hypothesis: the two size proofs that
-   [measure_source_empirical] carries in its STATEMENT are gone, because
-   the length is in the type.  Note also what is deliberately absent --
-   [te_size].  This conclusion quotes no rate, so the declared size has no
-   business appearing in it; a [te_size] hypothesis here would be one that
-   the proof never uses. *)
+(* THE EXACT-SAMPLE LAW.  [measure_source_law] is about the population law;
+   an experimenter sees a finite sample, and this is the counterpart: run
+   the protocol on every unit of [s], tabulate the logged values, and you
+   get back the abstract law [dmap g (P n)] -- PROVIDED [s] is
+   representative ([emp_rV s = fdist_context P]).  That is the honest form
+   of "exhaustive": the sample already carries the right law, and the
+   assumption is stated rather than assumed away.  All of it is finite --
+   no limits anywhere.  The work is done by [Prob.emp_rV_map]: tabulating
+   and then pushing through the protocol is the same as running the protocol
+   on every unit and then tabulating.
+
+   Note what is NOT a hypothesis.  No size proofs: the length is in the
+   type.  And no [te_size] -- this conclusion quotes no rate, so the
+   declared size has no business appearing in it, and a [te_size]
+   hypothesis here would be one the proof never uses.
+
+   CAVEAT, and the reason this is a warm-up rather than the result: the
+   representativeness premise silently restricts [P] to rational values
+   with denominator dividing N+1, because an empirical distribution can
+   only land on that grid ([Prob.emp_rV_grid]).  Against an irrational
+   truth it is vacuous.  [measure_source_emp_lln] below carries no such
+   premise. *)
 Theorem measure_source_empirical_rV (te : texperiment dom) (n : Node G)
     (g : dom n -> dom n) (N : nat) (s : sample N.+1) :
   G_well_formed G = true ->
@@ -556,6 +554,71 @@ have Hrv :
   by rewrite /GRing.scale /= mulrC.
 rewrite Hrv Hsz.
 exact: measure_source_lln.
+Qed.
+
+(* ===================================================================== *)
+(* The dataset: every measured node's column at once                     *)
+(* --------------------------------------------------------------------- *)
+(* [log_sample] is ONE node's column.  A dataset is all of them, and the  *)
+(* interesting thing about having them together is that unit i's JOINT    *)
+(* observation becomes available -- which is what a query like            *)
+(* [P(R | do(T))] needs, and what a per-node marginal cannot express.     *)
+(*                                                                        *)
+(* Columns are addressed BY NODE with an [is_measured] ticket, exactly as *)
+(* [Prob.parent_view] addresses parents with an [is_parent] ticket: no    *)
+(* ticket, no read, so a node the protocol never measured is UNASKABLE    *)
+(* rather than answered with junk.  (Without the ticket the column would  *)
+(* still typecheck and would return [dec n 0], since [log_val] reads an    *)
+(* absent log entry through [odflt 0] -- data that looks real and is not.) *)
+(*                                                                        *)
+(* The ticket costs nothing here, which is worth recording because it     *)
+(* normally would.  A ticketed type is a function out of a [Prop], so it  *)
+(* is NOT a finType and cannot carry an [fdist].  That would be fatal if  *)
+(* the dataset needed its own law -- but it does not: a dataset is a       *)
+(* deterministic function of the sample, and every probabilistic statement *)
+(* here is already phrased over [fdist_sample].  The concrete side holds   *)
+(* DATA, the abstract side holds the law ([Prob.fdist_node]), and the two  *)
+(* are compared through [emp_rV].  So the law lives where the randomness   *)
+(* is, and the dataset is free to be faithful instead of enumerable.      *)
+(* ===================================================================== *)
+
+Definition dataset (te : texperiment dom) (N : nat) : Type :=
+  forall n : Node G, is_measured te n -> 'rV[dom n]_N.
+
+(* what a run produces: each measured node's column, over the whole sample *)
+Definition log_dataset (te : texperiment dom) (N : nat) (s : sample N)
+  : dataset te N :=
+  fun n _ => log_sample (elab_exp enc dec te) n s.
+
+(* unit i's joint observation at two measured nodes.  The pairing is a real
+   index [i : 'I_N], not a positional convention that could drift. *)
+Definition joint_at (te : texperiment dom) (N : nat) (x y : Node G)
+    (Hx : is_measured te x) (Hy : is_measured te y)
+    (d : dataset te N) (i : 'I_N) : dom x * dom y :=
+  ((d x Hx) ``_ i, (d y Hy) ``_ i).
+
+(* a protocol that measures n does have a ticket for n -- this is what
+   discharges the ticket for the one-[Measure] protocols below *)
+Lemma is_measured_single (te : texperiment dom) (n : Node G) :
+  te_ops te = @TMeasure G dom n :: nil -> is_measured te n.
+Proof. by rewrite /is_measured => ->; rewrite /= inE eqxx. Qed.
+
+(* and the exact-sample law transfers to the dataset's column verbatim:
+   [log_dataset]'s column at n IS [log_sample] at n, so everything already
+   proved about columns applies to the dataset unchanged *)
+Corollary measure_source_dataset (te : texperiment dom) (n : Node G)
+    (g : dom n -> dom n) (N : nat) (s : sample N.+1)
+    (Hm : is_measured te n) :
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  find_parents (ssval n) G = nil ->
+  te_ops te = @TMeasure G dom n :: nil ->
+  (forall u pa, (te_mech te : tgraphfun dom) n u pa = g u) ->
+  emp_rV s = fdist_context P ->
+  emp_rV (@log_dataset te N.+1 s n Hm) = dmap g (P n).
+Proof.
+move=> Hwf Hcyc Hnp Hops Hmech Hrep.
+exact: measure_source_empirical_rV.
 Qed.
 
 End ExperimentLaw.
