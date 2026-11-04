@@ -25,6 +25,8 @@
 \newcommand{\Wld}{\mathcal{W}}         % worlds (endogenous)
 \newcommand{\pv}{\Pi}                  % parent view
 \newcommand{\solve}{\mathsf{solve}}
+\newcommand{\solvedo}{\solve^{\mathrm{do}}}
+\newcommand{\fdo}{\mathsf{fdist\_do}}
 \newcommand{\enc}{\mathsf{enc}}
 \newcommand{\dect}{\mathsf{dec}}
 \newcommand{\elab}{\mathsf{elab}}
@@ -393,22 +395,29 @@ many units the protocol draws, never which ones. It is recorded because a
 trial's sample size is pre-registered --- fixed before any data exists,
 exactly like the choice of which node to randomize.
 
-\subsection{Well-formedness, and the ordering discipline}
+\subsection{Well-formedness, and the missing time dimension}
 
 Well-formedness of an experiment asks that the graph be a well-formed
 acyclic DAG with treatments and responses, that every node read be
-measurable, that mechanisms be compatible with the DAG (free, by
-elaboration), and that no surgery follow a measurement.
+measurable, and that mechanisms be compatible with the DAG (free, by
+elaboration). It places no constraint on the \emph{order} of operations.
 
-That last clause deserves a word. Intervening and randomizing rewrite the
-mechanism, so $\mathsf{Measure}(n)$ reads a different value before and
-after them; but the abstract layer has no temporal resolution, since
-measuring changes neither the graph nor the law. A protocol measuring a
-node both before and after surgery would therefore have two concrete
-values and only one abstract law. Forbidding surgery after a measurement
-rules this out and keeps the two layers in agreement. It is sound but
-crude: measuring a node that no later surgery can affect is harmless, so a
-descendant-based condition would be strictly more permissive.
+An earlier version also required that no surgery follow a measurement, and
+the reason it was dropped deserves a word. Intervening and randomizing
+rewrite the mechanism, so $\mathsf{Measure}(n)$ reads a different value
+before and after them; but the abstract layer has no temporal resolution,
+since measuring changes neither the graph nor the law. A protocol measuring
+a node both before and after surgery therefore has two concrete values and
+only one abstract law. The ordering clause hid this by banning such
+protocols --- among them the pre-test/post-test design, one of the most
+common in practice. The disagreement is a symptom of the abstract layer
+lacking time, not a constraint on experiments, so the clause was removed.
+The intended repair is a time-indexed abstract layer in which each
+$\mathsf{Measure}$ reads the node at the current time point, so a measure
+before and a measure after surgery read two distinct nodes, each with its
+own law. Until that exists, the abstract--concrete agreement can only be
+stated for protocols that do not measure a node and then operate on it or
+on an ancestor of it.
 
 \subsection{The concrete per-unit semantics}
 
@@ -794,6 +803,18 @@ Theorem~\ref{thm:lln}.
       relation to the sample at hand.
 \end{itemize}
 
+
+\begin{remark}[The hypotheses are about the target, not the probability]
+\label{rem:hypsremovable}
+The five structural hypotheses inherited from Theorem~\ref{thm:law} are
+used in exactly one place: Lemma~\ref{lem:eind}, to rewrite the
+indicator's mean as $(\push{g}P_n)(v)$. Nothing in the Chebyshev argument
+touches them. Naming the target by the abstract semantics instead removes
+all five and generalises the statement to an arbitrary protocol at an
+arbitrary node; see Lemma~\ref{lem:eindany} and
+Theorem~\ref{thm:llnany}.
+\end{remark}
+
 \subsection{The checker, and its soundness}
 
 The static design checks are the application layer. Each consists of a
@@ -1020,14 +1041,255 @@ Lemma~\ref{lem:uncurry}.
       operation --- replacing $P_T$ by a declared coin --- becomes
       necessary only for a compositional runner that walks the operation
       list. Note also that hoisting such law-surgery to before sampling is
-      sound only because the ordering discipline forces all surgery to
-      precede all measurement; it would not survive adaptive designs.
+      sound only when all surgery precedes all measurement, as it does in
+      this protocol; it would not survive adaptive designs, nor protocols
+      that measure before operating.
 \item \textbf{It is still one node's marginal.} The theorem is about $R$'s
       law, not about the joint law of $(T,R)$ that a conditional query would
       need. Lemma~\ref{lem:pairmarg} is the piece that makes such joints
       expressible; using it to state an identification result is Theorem B,
       which remains open.
 \end{itemize}
+
+\subsection{The same trial over arbitrary finite domains}
+\label{sec:rct2gen}
+
+The development above is stated at two particular domains, of sizes two and
+four. None of its proofs ever inspects those domains: Lemmas
+\ref{lem:rct2T} and \ref{lem:rct2R} run on the cancellation law
+$\dect_n(\enc_n(v)) = v$ alone, and the facts that are discharged by
+computation are facts about the \emph{graph} and the \emph{operation list},
+not about values. The cardinalities are therefore not load-bearing, and
+this subsection says so by replaying the trial at abstract domains.
+
+Let $A$ and $B$ be any finite types equipped with points $a_0 \in A$,
+$b_0 \in B$, and set $\dom_T = A$, $\dom_R = B$. The points are what make
+decoding \emph{total}: $\dect_n$ has type $\mathbb{N} \to \dom_n$ and must
+answer on codes that name no value. This is not a real restriction, since
+$P_n \in \Dist{\dom_n}$ already forces $\dom_n$ nonempty; but it must be
+assumed separately, because $\dect$ is used by elaboration, outside the
+scope in which $P$ is given. For the codes themselves one may take the
+canonical enumeration of a finite type,
+\[
+  \enc_n \;=\; \mathsf{enum\_rank},
+  \qquad
+  \dect_n(m) \;=\; \mathsf{nth}\,(x_0)\,(\mathsf{enum}\ \dom_n)\,m ,
+\]
+which cancel for every finite type. Generalise the mechanisms too: let
+$\mathit{bias} : A \to A$ be arbitrary and put
+\[
+  F_T(u,\pi) \;=\; \mathit{bias}(u),
+  \qquad
+  F_R(u,\pi) \;=\; h\bigl(\pi(T),\, u\bigr),
+  \qquad
+  h : A \to B \to B .
+\]
+
+\begin{theorem}[Correctness of the $k$-arm trial]
+\label{thm:rct2gen}
+For any finite $A, B$ with points, any $\mathit{bias} : A \to A$, any
+$h : A \to B \to B$, any declared sample size and any
+$P \in \prod_n \Dist{\dom_n}$, the protocol
+$[\mathsf{Randomize}(T), \mathsf{Measure}(R)]$ satisfies
+\[
+  \mathsf{fdist\_log}(e, R)
+  \;=\;
+  \int_{t \sim P_T} \push{\bigl(h(t,\cdot)\bigr)} P_R .
+\]
+\end{theorem}
+
+\begin{proof}
+Verbatim the proofs of Lemmas~\ref{lem:rct2T} and~\ref{lem:rct2R} and of
+Theorems~\ref{thm:rct2law} and~\ref{thm:rct2}, with $\enc_2, \dect_2$
+replaced by the canonical codes and $\textsf{placebo}$ by
+$\mathit{bias}(u)$. Every step that previously appealed to a concrete
+table appeals instead to cancellation, and no step appeals to
+$|A|$ or $|B|$.
+\end{proof}
+
+Three things are generalised at once, and each says something.
+
+\begin{itemize}
+\item \textbf{$|\dom_R|$ is free.} The response may be binary, ordinal
+      with any number of grades, or any other finite measurement.
+\item \textbf{$|\dom_T|$ is free, so this is a $k$-arm trial.} Taking
+      $k = |A|$ arms with allocation law $P_T$ covers the balanced
+      $k$-arm design ($P_T$ uniform), the familiar two-arm trial with any
+      allocation ratio, and dose-response designs; $|A| = 1$ degenerates
+      to a single-arm study, where the statement remains true and empty of
+      content. Since Theorem~\ref{thm:rct2gen} is uniform in $P$, both
+      the arm count and the randomization ratio are free parameters of the
+      \emph{instance}, not of the theorem.
+\item \textbf{The erased mechanism is arbitrary.} Above, the mechanism
+      that randomization overrode was the constant $\textsf{placebo}$.
+      Here it is an arbitrary function of $T$'s own noise, and
+      $\mathit{bias}$ does not occur in the conclusion. That absence
+      sharpens the reading of Theorem~\ref{thm:rct2} from ``randomization
+      erased a constant'' to ``randomization erased whatever was there''.
+\end{itemize}
+
+\begin{remark}[Why both versions are kept]
+The canonical codes are built from $\mathsf{enum\_rank}$, which does not
+reduce, so the abstract development proves laws but cannot discharge
+anything by computation --- whereas the concrete trial of
+\S\ref{sec:rct2} evaluates its elaboration and its ordering side
+conditions by $\mathsf{reflexivity}$. The two versions are therefore
+complementary: the concrete one is the one that \emph{runs}, the abstract
+one is the one that \emph{generalises}, and both are retained in the
+formalisation.
+\end{remark}
+
+\begin{remark}[What is not claimed]
+\label{rem:notinstance}
+Theorem~\ref{thm:rct2} is \emph{not} literally an instance of
+Theorem~\ref{thm:rct2gen}. The concrete development uses hand-written
+codes and the abstract one uses the canonical enumeration, and nothing
+proved so far says that the logged law is independent of which cancelling
+code pair is chosen. That independence is true, and it follows from
+general elaboration correctness (\S\ref{sec:limits}); it is not
+available from the two-node development on its own.
+\end{remark}
+
+\subsection{The concrete run against the abstract law}
+\label{sec:rct2emp}
+
+Everything so far in this section compares \emph{distributions}. What an
+experimenter actually has is a column of logged values, and the question
+is whether the numbers computed from it approach the abstract law. This
+subsection states that, for the trial of \S\ref{sec:rct2gen}.
+
+The route is shorter than it looks, because Theorem~\ref{thm:lln} carries
+five structural hypotheses --- the graph is a dag, the measured node is a
+source, the protocol is a single measurement, and that node's mechanism is
+$g$ --- and \emph{none of them is used by the probability}. They are there
+only to \emph{name} the target: Lemma~\ref{lem:eind} appeals to
+Theorem~\ref{thm:law} in order to rewrite the indicator's mean as
+$(\push{g}P_n)(v)$. If one names the target by the abstract semantics
+instead, all five vanish.
+
+\begin{lemma}[The indicator's mean is the logged law, unconditionally]
+\label{lem:eindany}
+For every experiment $e$, every node $n$ and every $v \in \dom_n$,
+\[
+  \Ex_{P_\Ctx}\bigl[\Ind{A_v}\bigr] \;=\; \mathsf{fdist\_log}(e,n)(v) .
+\]
+\end{lemma}
+
+\begin{proof}
+The mean of an indicator is the probability of its event, and
+$P_\Ctx(A_v)$ is by definition the mass that
+$\push{(\lambda w.\,\logv(e,w,n))}P_\Ctx$ assigns to $v$ --- which is
+$\mathsf{fdist\_log}(e,n)(v)$. Unfolding both sides is the whole proof;
+no hypothesis on $e$, on $n$, or on the graph is required.
+\end{proof}
+
+\begin{theorem}[Experiment-level concentration]
+\label{thm:llnany}
+For every experiment $e$, every node $n$, every $v \in \dom_n$, every $N$
+and every $\varepsilon > 0$,
+\[
+  \Pr_{\,s \,\sim\, P_{\Smp_{N+1}}}
+  \Bigl[\;
+     \bigl|\;\emp{\mathsf{col}(e,n,s)}(v)
+            \;-\; \mathsf{fdist\_log}(e,n)(v)\;\bigr|
+     \;\ge\; \varepsilon
+  \;\Bigr]
+  \;\le\;
+  \frac{\Var_{P_\Ctx}\bigl[\Ind{A_v}\bigr]}{(N+1)\,\varepsilon^{2}} .
+\]
+\end{theorem}
+
+\begin{proof}
+Verbatim the proof of Theorem~\ref{thm:lln}, with Lemma~\ref{lem:eindany}
+in place of Lemma~\ref{lem:eind}.
+\end{proof}
+
+This is the two semantics meeting at their own level of generality: the
+concrete semantics produces the left-hand quantity, the abstract semantics
+produces the right-hand one, and the protocol has been assumed nothing
+about. All protocol-specific work is now pushed into \emph{computing}
+$\mathsf{fdist\_log}(e,n)$ --- which is exactly what each worked example
+does. For the trial, Theorem~\ref{thm:rct2gen} has already done it.
+
+\begin{theorem}[The two-node trial converges in probability]
+\label{thm:rct2emp}
+Let $A, B$ be finite with points, let $\mathit{bias} : A \to A$ and
+$h : A \to B \to B$ be arbitrary, let the protocol be
+$[\mathsf{Randomize}(T), \mathsf{Measure}(R)]$ with declared size $N+1$,
+run on a sample of $N+1$ units, and fix $v \in B$. Then for every
+$\varepsilon > 0$,
+\[
+  \Pr_{\,s}
+  \Bigl[\;
+     \Bigl|\;\emp{\mathsf{col}(e,R,s)}(v)
+       \;-\; \Bigl(\int_{t \sim P_T} \push{(h(t,\cdot))}P_R\Bigr)(v)
+     \;\Bigr| \;\ge\; \varepsilon
+  \;\Bigr]
+  \;\le\;
+  \frac{\Var_{P_\Ctx}\bigl[\Ind{A_v}\bigr]}{(N+1)\,\varepsilon^{2}} ,
+\]
+and consequently, for every $\varepsilon > 0$ and every $\delta > 0$ there
+is an $N_0$ such that for all $N \ge N_0$ that probability is at most
+$\delta$.
+\end{theorem}
+
+\begin{proof}
+The first display is Theorem~\ref{thm:llnany} with its target rewritten by
+Theorem~\ref{thm:rct2gen}. For the second, put
+$C = \Var_{P_\Ctx}[\Ind{A_v}]$ and take
+$N_0 = \lfloor C / (\delta\varepsilon^{2}) \rfloor$; since the reals are
+archimedean, $C/(\delta\varepsilon^{2}) < N_0 + 1 \le N+1$ whenever
+$N \ge N_0$, and rearranging gives
+$C/((N+1)\varepsilon^{2}) \le \delta$. No sign information about $C$ is
+needed, because the archimedean bound $x < \lfloor x \rfloor + 1$ holds
+for every real $x$.
+\end{proof}
+
+This is the statement the project was aiming at in miniature: a protocol
+written in the language, run concretely on a sample, reports numbers that
+converge to the quantity the abstract semantics assigns to it --- and the
+abstract quantity is in the identified form (an allocation mixture) that
+makes it an answer to a causal question rather than merely a marginal.
+
+\begin{remark}[The declared size \emph{is} the sample size]
+\label{rem:twosizes}
+The size recorded in the experiment and the number of units drawn are the
+same throughout Theorem~\ref{thm:rct2emp}: the protocol is the one whose
+declared size is $N+1$, and the rate quotes that declared size, so a
+record whose declaration disagreed with its sample is not an instance of
+the theorem. This is the point of pre-registering a size, and it is the
+discipline Theorem~\ref{thm:lln} enforces through an explicit hypothesis;
+here the two are identified by construction, so no hypothesis is needed.
+
+Tying them is not free, and the cost is worth recording because it is the
+only place in \S\ref{sec:rct2emp} where the declared size does any
+technical work. In the $\varepsilon$-$\delta$ statement the sample size is
+\emph{quantified}, so the variance constant from which $N_0$ is chosen
+must not itself depend on the $N$ being quantified --- and written
+directly it appears to, since the experiment mentions $N+1$. What rescues
+it is that elaboration never reads the declared size:
+\[
+  \llbracket \langle \ell, F, \vec{o}, M \rangle \rrbracket
+  \;=\;
+  \llbracket \langle \ell, F, \vec{o}, M' \rangle \rrbracket
+  \qquad\text{for all } M, M',
+\]
+by conversion, since the elaborated experiment is built from the labels,
+the mechanisms and the operation list alone. Hence the indicator of ``this
+unit logged $v$'' --- and so its variance --- is literally the same term at
+every declared size, and the constant can be named once at a fixed index.
+That named constant is what appears in the bound.
+\end{remark}
+
+\begin{remark}[One value at a time]
+\label{rem:onevalue}
+Theorem~\ref{thm:rct2emp} is convergence \emph{at a fixed value} $v$, not
+convergence of the empirical distribution to the law as a whole. Since
+$B$ is finite, a union bound over $B$ upgrades it: replacing $\delta$ by
+$\delta/|B|$ in each of the $|B|$ instances bounds the probability that
+\emph{any} value's frequency is off by more than $\varepsilon$, which is
+convergence in the supremum distance. That step is not yet formalised.
+\end{remark}
 
 \section{Confounding, and what randomization removes}
 \label{sec:rct3}
@@ -1212,6 +1474,400 @@ that the general statement \eqref{eq:elabcorrect} needs only the
 positional--keyed correspondence.
 \end{remark}
 
+\subsection{The interventional law, and what the trial earns}
+\label{sec:do3}
+
+Theorem~\ref{thm:rct3} is a statement about \emph{pushforwards}. It says
+the trial's outcome law factorises as a mixture over a treatment law ---
+good evidence that randomization worked --- but nothing in it mentions
+$\mathrm{do}$, and the mixand is still only ``$Z$'s own law pushed through
+$h$ with the treatment held fixed''. This subsection names that mixand as
+an interventional law, which is what turns Theorem~\ref{thm:rct3} into a
+causal statement.
+
+The typed layer gets $\mathrm{do}$ for nothing, because
+$\mathsf{semantic\_do}$ is a \emph{denotation} --- a second way to read a
+model, not an operation a protocol performs. Write $\mathrm{do}(a)G$ for
+$G$ with $a$'s incoming edges removed, and $F[f_a := \text{const } v]$ for
+the mechanism family with $a$'s mechanism replaced by that constant. Then,
+exactly parallel to $\solve$ in \S\ref{sec:elab},
+\[
+  \solvedo_{a := v}(w)(n)
+  \;=\;
+  \dect_n\Bigl(\ev\bigl(\mathrm{do}(a)G,\;
+      \elab(F)[f_a := \text{const } \enc_a v],\; n,\; \lceil w\rceil\bigr)\Bigr),
+\]
+\[
+  \fdo_{a := v}(n)
+  \;=\;
+  \push{\bigl(\lambda w.\,\solvedo_{a := v}(w)(n)\bigr)} P_\Ctx
+  \;\in\; \Dist{\dom_n},
+\]
+and $\fdo_{a := v}(n)$ \emph{is} $P(n \mid \mathrm{do}(a := v))$.
+
+Two things about this definition. It introduces no new randomness and no
+new program construct: it is a pushforward of the same exogenous law along
+a deterministic map, exactly as $\mathsf{fdist\_node}$ is. And it does not
+read $w_a$ --- the constant mechanism ignores both parents and noise, so
+$a$'s own draw is dead, which is what ``setting $a$'' ought to mean.
+
+\begin{lemma}[The surgered solve, per unit]
+\label{lem:do3}
+In $G_3$ with $F = F_3$, for every $t$,
+$\;\solvedo_{X := t}(w)(Y) = h(t, w_Z)$.
+\end{lemma}
+
+\begin{proof}
+Three solves on the surgered graph in topological order, as for
+Lemma~\ref{lem:rct3}. $Z$ is untouched by the surgery and echoes $w_Z$. At
+$X$ the mechanism is gone and so is the parent list --- in
+$\mathrm{do}(X)G_3$ one computes $\pa(X) = \varnothing$ --- so $X$ is the
+constant $\enc_X(t)$. At $Y$ the surgery changed nothing: $\pa(Y) = [X;Z]$
+still, so the positional list is $[\enc_X(t), \enc_Z(w_Z)]$ and the keyed
+reads recover $t$ and $w_Z$ by the cancellation.
+\end{proof}
+
+Compare Lemma~\ref{lem:rct3}. Randomization leaves the edge $Z \to X$ in
+the graph and has $X$'s replaced mechanism discard the parent list it is
+handed; the surgery removes the edge outright. The two agree at $Y$ because
+what $Y$ sees is the \emph{value} at $X$, and under both readings that
+value is free of $Z$.
+
+\begin{theorem}[The interventional law at $Y$]
+\label{thm:do3}
+\[
+  \fdo_{X := t}(Y) \;=\; \push{\bigl(h(t,\cdot)\bigr)} P_Z .
+\]
+\end{theorem}
+
+\begin{proof}
+Push Lemma~\ref{lem:do3} forward and marginalise the context at the single
+node $Z$ by Lemma~\ref{lem:ctxmarg}.
+\end{proof}
+
+Notice which law survives. Setting $X$ kills $X$'s draw, so the only
+randomness left upstream of $Y$ is the confounder's own noise, and the
+answer is $P_Z$ pushed through the response table with the treatment held
+fixed. $Z$ has not been removed from the model; it has been \emph{left
+alone}, which is the difference between intervening on $X$ and intervening
+on $Z$.
+
+\begin{theorem}[The trial is a mixture of interventional laws]
+\label{thm:rct3do}
+\[
+  \mathsf{fdist\_log}(e_{\mathrm{trial}}, Y)
+  \;=\;
+  \int_{t \sim P_X} \fdo_{X := t}(Y) .
+\]
+\end{theorem}
+
+\begin{proof}
+Theorem~\ref{thm:rct3} with its mixand rewritten by Theorem~\ref{thm:do3}.
+\end{proof}
+
+That is the causal reading of the trial: \emph{the law the randomized
+protocol logs at $Y$ is the mixture, over the randomization law, of the
+interventional laws $P(Y \mid \mathrm{do}(X := t))$}. Randomizing is not
+\emph{identified} with intervening here --- the protocol performs no
+$\mathsf{Intervene}$, and $\mathrm{do}$ is a denotation rather than an
+operation. What is proved is that on this model the two readings coincide,
+which is what makes the trial an instrument for a causal quantity. And it
+has a counterpart on the observational side.
+
+\begin{corollary}[Confounding, as an inequation]
+\label{cor:obsnotdo}
+At $P_3$,
+\[
+  \mathsf{fdist\_log}(e_{\mathrm{obs}}, Y)
+  \;\neq\;
+  \int_{t \sim P_X} \fdo_{X := t}(Y) .
+\]
+\end{corollary}
+
+\begin{proof}
+Theorem~\ref{thm:sep3} says the two protocols' laws differ, and
+Theorem~\ref{thm:rct3do} says the trial's law is the right-hand side.
+\end{proof}
+
+So on this model seeing is not doing, and the gap is exactly the bias the
+trial exists to remove --- stated not as a slogan but as an inequation
+between a law the confounded design produces and the causal quantity it
+would be mistaken for.
+
+\begin{remark}[What this does \emph{not} rest on]
+\label{rem:notthebridge}
+Theorem~\ref{thm:rct3do} is proved by computing both sides on this model,
+\emph{not} by the general randomize/$\mathrm{do}$ bridge. That bridge
+exists per unit as Theorem~\ref{thm:randdo}; its distributional lift is
+still open (\S\ref{sec:limits}). Lifting it would mean reconciling the
+draw written at the \emph{head} of the exogenous assignment with the slot
+$\lceil w \rceil$ already provides for the same node --- an equivalence
+argument, since the engine's lookup takes the first match --- and then
+pushing the per-unit identity through the mixture over the coin. Until
+that exists, what is established here is that the two readings
+\emph{agree on this model}, not in general.
+\end{remark}
+
+\subsection{The concrete run against the causal law}
+\label{sec:rct3emp}
+
+With Theorem~\ref{thm:rct3do} in hand, the chain of \S\ref{sec:rct2emp}
+closes on a confounded model, and the quantity at its far end is causal.
+
+\begin{theorem}[The confounded trial converges to the interventional mixture]
+\label{thm:rct3emp}
+Let the protocol be $[\mathsf{Randomize}(X), \mathsf{Measure}(Y)]$ with
+declared size $N+1$, run on a sample of $N+1$ units, and fix
+$v \in \dom_Y$. Then for every $\varepsilon > 0$,
+\[
+  \Pr_{\,s}
+  \Bigl[\;
+     \Bigl|\;\emp{\mathsf{col}(e_{\mathrm{trial}},Y,s)}(v)
+       \;-\; \Bigl(\int_{t \sim P_X} \fdo_{X := t}(Y)\Bigr)(v)
+     \;\Bigr| \;\ge\; \varepsilon
+  \;\Bigr]
+  \;\le\;
+  \frac{\Var_{P_\Ctx}\bigl[\Ind{A_v}\bigr]}{(N+1)\,\varepsilon^{2}} ,
+\]
+and consequently, for every $\varepsilon > 0$ and every $\delta > 0$ there
+is an $N_0$ such that for all $N \ge N_0$ that probability is at most
+$\delta$.
+\end{theorem}
+
+\begin{proof}
+Verbatim the proof of Theorem~\ref{thm:rct2emp}, with
+Theorem~\ref{thm:rct3do} naming the target in place of
+Theorem~\ref{thm:rct2gen}. Nothing about the model or the protocol enters
+the probability, by Theorem~\ref{thm:llnany}; the declared size is tied to
+the sample size in the same way, and the variance constant can be named
+once at a fixed declared size because elaboration drops the declared size
+(Remark~\ref{rem:twosizes}).
+\end{proof}
+
+This is the development's full arc on a model where randomization is doing
+real work: a protocol written in the language, elaborated and run
+concretely on a sample of units, reports frequencies that converge in
+probability to a quantity the abstract semantics defines by \emph{surgery}
+--- and by Corollary~\ref{cor:obsnotdo} the observational protocol on the
+same model converges somewhere else.
+
+\begin{remark}[Still one value, and still no treatment column]
+\label{rem:rct3emplimits}
+Both displays fix a single $v \in \dom_Y$, so Remark~\ref{rem:onevalue}
+applies unchanged: a statement about the whole law wants the union bound.
+Separately, $e_{\mathrm{trial}}$ does not measure $X$ ---
+$\mathsf{is\_measured}(e_{\mathrm{trial}}, X)$ is $\mathrm{false}$ by
+computation --- so the log has no treatment column, and no \emph{per-arm}
+or conditional empirical statement can be made about this protocol without
+adding $\mathsf{Measure}(X)$ to it.
+\end{remark}
+
+\subsection{Per arm: measuring the treatment too}
+\label{sec:rct3arm}
+
+Theorem~\ref{thm:rct3do} identifies the trial's logged law with a
+\emph{mixture} of interventional laws. A mixture has already averaged over
+the arms and cannot be un-averaged, so $P(Y \mid \mathrm{do}(X := x))$ for a
+\emph{particular} $x$ is not recoverable from it. Separating the arms means
+knowing which arm each unit was in --- an $X$ column. In the typed layer
+that is not merely practical but enforced: the joint law and the dataset's
+$\mathsf{joint\_at}$ both demand an $\mathsf{is\_measured}$ ticket for
+\emph{both} nodes, so without $\mathsf{Measure}(X)$ the conditional cannot
+even be stated.
+
+So let $e_{\mathrm{full}}$ be
+$[\mathsf{Randomize}(X), \mathsf{Measure}(X), \mathsf{Measure}(Y)]$ on the
+same model, kept as a separate protocol so that everything proved about
+$e_{\mathrm{trial}}$ stands. Adding the measurement is cheap for a precise
+reason: a $\mathsf{Measure}$ step leaves the mechanism family alone and only
+appends to the log, so the \emph{solve} is unchanged and
+Lemmas~\ref{lem:rct3} and following are reused verbatim. Only $\logv$
+changes, and since the engine's lookup takes the first match the new $X$
+entry cannot shadow $Y$'s.
+
+\begin{definition}[Joint logged law]
+For nodes $m,n$,
+\[
+  \mathsf{fdist\_log}_2(e,m,n)
+  \;=\;
+  \push{\bigl(\lambda w.\,(\logv(e,w,m),\,\logv(e,w,n))\bigr)} P_\Ctx
+  \;\in\; \Dist{\dom_m \times \dom_n},
+\]
+whose two marginals are $\mathsf{fdist\_log}(e,m)$ and
+$\mathsf{fdist\_log}(e,n)$.
+\end{definition}
+
+No conditioning machinery is added. The events of \S\ref{sec:lln} are
+already \emph{sets of contexts}, and the sample space is the single
+finite type $\Ctx$ carrying the single law $P_\Ctx$, so infotheo's
+$\Pr[E \mid F] = P_\Ctx(E \cap F) / P_\Ctx(F)$ applies unchanged: a
+conditional logged probability is a ratio of two unconditional ones. What
+has to be proved is only that those two are the joint and the marginal:
+
+\begin{lemma}[The two masses]
+\label{lem:prout}
+$P_\Ctx(A_v^{n}) = \mathsf{fdist\_log}(e,n)(v)$ and
+$P_\Ctx(A_u^{m} \cap A_v^{n}) = \mathsf{fdist\_log}_2(e,m,n)(u,v)$,
+where $A_v^{n}$ is the event that this unit logged $v$ at $n$. Both hold by
+unfolding, with no hypothesis on $e$, on the nodes, or on the graph.
+\end{lemma}
+
+\begin{theorem}[The trial's joint law]
+\label{thm:rct3joint}
+\[
+  \mathsf{fdist\_log}_2(e_{\mathrm{full}}, X, Y)
+  \;=\;
+  \int_{x \sim P_X} \push{(\lambda y.\,(x,y))}\;\fdo_{X := x}(Y) .
+\]
+\end{theorem}
+
+\begin{proof}
+The $X$ column logs $w_X$ and the $Y$ column $h(w_X,w_Z)$, so the joint is
+the pushforward of $P_\Ctx$ along $w \mapsto (w_X, h(w_X,w_Z))$. Factorise
+at the distinct nodes $X,Z$ by Lemma~\ref{lem:pairmarg}, convert to a
+mixture by Lemma~\ref{lem:uncurry}, and rewrite the mixand by
+Theorem~\ref{thm:do3}.
+\end{proof}
+
+This says the randomized trial is \emph{jointly} a mixture of
+do-experiments, not merely a mixture of their marginals: draw the arm from
+the allocation law, then draw the outcome from that arm's interventional
+law. It needs no positivity, and Theorem~\ref{thm:rct3do} is its
+$Y$-marginal, so it subsumes that theorem.
+
+\begin{theorem}[Conditioning on the arm gives the interventional law]
+\label{thm:rct3cond}
+If $P_X(x) \neq 0$ then
+\[
+  \Pr\bigl[\,A_y^{Y} \;\big|\; A_x^{X}\,\bigr]
+  \;=\;
+  \fdo_{X := x}(Y)(y)
+  \;=\; P(Y = y \mid \mathrm{do}(X := x)).
+\]
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:prout} the conditional is
+$\mathsf{fdist\_log}_2(e_{\mathrm{full}},X,Y)(x,y) /
+ \mathsf{fdist\_log}(e_{\mathrm{full}},X)(x)$. The denominator is
+$P_X(x)$, and by Theorem~\ref{thm:rct3joint} the numerator is
+$P_X(x) \cdot \fdo_{X := x}(Y)(y)$; divide.
+\end{proof}
+
+That is the sense in which conditioning on the arm of a \emph{randomized}
+trial is legitimate. Under $e_{\mathrm{full}}$ the logged $X$ is $w_X$,
+$X$'s own exogenous slot, which the product form of $P_\Ctx$ makes
+independent of every other slot --- so selecting the units with $X = x$
+selects on nothing else. Under $e_{\mathrm{obs}}$ the logged $X$ would be
+$\beta(w_Z)$, and selecting on it would select on $Z$; that gap is
+Corollary~\ref{cor:obsnotdo}.
+
+\begin{remark}[Where positivity lives]
+\label{rem:overlap}
+$P_X(x) \neq 0$ is the overlap condition, and it appears in exactly one
+place: the division. It is a condition on the \emph{numbers}, so no
+well-formedness discipline can discharge it --- which is why it is a
+hypothesis on the one statement that divides, rather than a side condition
+baked into a conditional-distribution type. Note what does \emph{not} need
+it: Theorem~\ref{thm:do3} holds for every $x$, including arms of
+probability zero. The interventional law exists whether or not a trial can
+estimate it; overlap is about \emph{estimating} it.
+\end{remark}
+
+\subsection{The conditional estimator}
+\label{sec:empcond}
+
+What an experimenter reports for an arm is a quotient of two counts, and
+conditioning destroys the i.i.d.\ structure Theorem~\ref{thm:llnany} rests
+on: the number of units in an arm is itself random. The way round is to
+keep both halves of the quotient inside the i.i.d.\ world and pay for the
+division separately.
+
+That needs one simplification first. Theorem~\ref{thm:llnany} is indexed by
+a node and a value, and its proof never uses what the event $A_v^n$
+\emph{is} --- only that its mass is the target. So the indexing is about
+naming the \emph{event}, exactly as the five hypotheses it already shed
+were about naming the target. Dropping it gives, for every
+$A \subseteq \Ctx$, with $\emp{A}_N$ the fraction of the sample's units
+lying in $A$,
+\[
+  \Pr_{\,s}\Bigl[\;\bigl|\emp{A}_N(s) - P_\Ctx(A)\bigr| \ge \varepsilon\;\Bigr]
+  \;\le\;
+  \frac{\Var_{P_\Ctx}[\Ind{A}]}{(N+1)\,\varepsilon^{2}},
+\]
+and the per-column estimator of \S\ref{sec:lln} is the instance
+$A := A_v^n$, so nothing is lost. What is gained is that \emph{arms} and
+\emph{cells of a joint} are now in range; they are not of the form ``node
+$n$ logged $v$''.
+
+\begin{lemma}[A ratio of two estimates]
+\label{lem:ratio}
+Let $0 \le a \le b$, $0 < b$ and $2\delta \le b$. If
+$|\hat a - a| \le \delta$ and $|\hat b - b| \le \delta$ then
+\[
+  \Bigl|\tfrac{\hat a}{\hat b} - \tfrac{a}{b}\Bigr| \;\le\; \frac{4\delta}{b} .
+\]
+\end{lemma}
+
+\begin{proof}
+No probability is involved. From $|\hat b - b| \le \delta \le b/2$ we get
+$b/2 \le \hat b$, so the estimated denominator cannot collapse. Over the
+common denominator $\hat b\,b$ the numerator is
+$(\hat a - a)b - a(\hat b - b)$, of absolute value at most
+$\delta b + a\delta \le 2\delta b$ since $a \le b$; divide by
+$\hat b\, b \ge (b/2)\,b$.
+\end{proof}
+
+\begin{theorem}[The conditional estimator converges]
+\label{thm:empcond}
+Let $\emp{A \mid B}_N(s) = \emp{A \cap B}_N(s) / \emp{B}_N(s)$ be the
+reported conditional frequency. If $P_\Ctx(B) > 0$ then for every
+$\varepsilon > 0$ and $\delta > 0$ there is an $N_0$ such that for all
+$N \ge N_0$,
+\[
+  \Pr_{\,s}\Bigl[\;
+    \bigl|\emp{A \mid B}_N(s) - \Pr[A \mid B]\bigr| \ge \varepsilon
+  \;\Bigr] \;\le\; \delta .
+\]
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:ratio}, if both halves are within $\delta'$ of their
+targets then the quotient is within $4\delta'/P_\Ctx(B)$ of
+$\Pr[A \mid B]$. So the event that the quotient is off by $\varepsilon$ is
+\emph{contained} in the union of the two events that a half is off by
+$\delta'$, and monotonicity plus a union bound reduce the claim to two
+instances of the event-level weak law above. Taking
+$\delta' = \min\bigl(P_\Ctx(B)/2,\ \varepsilon P_\Ctx(B)/8\bigr)$ makes
+both side conditions hold --- the first argument keeps the estimated
+denominator away from zero, the second makes the quotient bound beat
+$\varepsilon$ --- and then $N_0$ is chosen archimedean\-ly from the two
+variances, as in Theorem~\ref{thm:rct2emp}.
+\end{proof}
+
+\begin{theorem}[What a confounded trial reports, arm by arm]
+\label{thm:rct3arm}
+Fix $x$ with $P_X(x) > 0$ and fix $y$. For every $\varepsilon > 0$ and
+$\delta > 0$ there is an $N_0$ such that for all $N \ge N_0$ the fraction
+of the units assigned $x$ whose outcome was $y$ is within $\varepsilon$ of
+$P(Y = y \mid \mathrm{do}(X := x))$ with probability at least
+$1 - \delta$.
+\end{theorem}
+
+\begin{proof}
+Theorem~\ref{thm:empcond} with $A := A_y^{Y}$ and $B := A_x^{X}$, whose
+mass is $P_X(x)$ by Lemma~\ref{lem:prout} and the $X$-column law, and the
+target rewritten by Theorem~\ref{thm:rct3cond}.
+\end{proof}
+
+This is the arm-by-arm counterpart of \S\ref{sec:rct3emp}, and the stronger
+of the two: that one converges to the mixture over the allocation, this one
+to each individual interventional law. The declared size is fixed at $1$ in
+the events, which costs nothing --- by Remark~\ref{rem:twosizes} the
+elaborated experiment is the same term at every declared size --- and is
+what lets the conditioning event stay fixed while the sample size is
+quantified.
+
 \section{What is not proved}
 \label{sec:limits}
 
@@ -1235,15 +1891,23 @@ Stated plainly, so that the scope of the above is not overread.
   the believability of the small operational semantics to the
   reasoning-friendly denotational one.
 
-\item[Identification (Theorem B, distributional).] That the log of a
-  randomized trial identifies $P(R \mid do(T))$ is not yet proved. It needs
-  the coin to have full support (overlap) and to be independent of
-  confounders --- both hold for a randomized trial by construction, and
-  uniformity is \emph{not} required.
+\item[Identification (Theorem B, distributional).]
+  Theorem~\ref{thm:rct3do} identifies the trial's logged law with an
+  interventional mixture \emph{on one model}, and does it by computing both
+  sides. The general statement --- that the log of a randomized trial
+  identifies $P(R \mid \mathrm{do}(T))$ for every well-formed design --- is
+  not proved, and would go through the distributional lift of
+  Theorem~\ref{thm:randdo} rather than through per-model computation
+  (Remark~\ref{rem:notthebridge}). It needs the coin to have full support
+  (overlap) and to be independent of confounders --- both hold for a
+  randomized trial by construction, and uniformity is \emph{not} required.
 
 \item[The weak law is per-value.] Theorem~\ref{thm:lln} fixes one
-  $v \in \dom_n$. A statement about the whole distribution needs a union
-  bound, at a cost of a factor $|\dom_n|$.
+  $v \in \dom_n$, and so do Theorems~\ref{thm:rct2emp},
+  \ref{thm:rct3emp} and \ref{thm:rct3arm}. A statement about the whole
+  distribution needs a union bound, at a cost of a factor $|\dom_n|$.
+  (The event-level form of \S\ref{sec:empcond} removes the \emph{node}
+  indexing but not the single value.)
 
 \item[The variance is left abstract.] $\Var[\Ind{A_v}] = p(1-p) \le 1/4$ is
   not computed, so the bound is stated in terms of a variance rather than
@@ -1263,6 +1927,12 @@ Stated plainly, so that the scope of the above is not overread.
 \item[Continuous outcomes.] Finiteness of the sample space is what the
   whole probability layer rests on. A real-valued node must be discretised,
   or the development must move to a measure-theoretic setting.
+
+\item[No time.] The abstract layer has one copy of each node, so a protocol
+  that measures a node and then intervenes on it or on an ancestor has two
+  concrete readings but one abstract law. Nothing in well-formedness rules
+  such protocols out any more; a time-indexed abstract layer is the planned
+  repair.
 
 \item[Scope of the language.] Treatments and responses are single nodes,
   not vectors; the protocol is a straight-line list, so adaptive designs

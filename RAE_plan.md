@@ -391,6 +391,10 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   `Hsz` makes the statement false, so the field is load-bearing rather than
   bookkeeping. Proved from `measure_source_lln` by one rewrite through
   `emp_rV_sum_iid`: no new probability theory. Axioms: boolp's three only.
+  **Superseded in generality (2026-10-21)** by `emp_lln_any`, which drops
+  all five structural hypotheses by naming the target `fdist_log_val`
+  instead of `dmap g (P n)`; `te_size` stays load-bearing only for *this*
+  statement, which is the one that quotes the declared size as its rate.
 - **New probability machinery** (`Prob.v`), none of which infotheo ships:
   - `emp_rV` / `emp_rVE` — the empirical distribution of a sample
     (`fdist_uniform` is uniform over a whole finType, not over a multiset).
@@ -469,6 +473,239 @@ reused through the boundary encoding (D5); distribution equality is infotheo's
   `Unset Implicit Arguments` as `Prob.v` does for its section variables;
   and `case: (altP (i =P x))` already resolves the cased condition, so the
   `eqxx`/`negbTE` rewrites one expects are absent.
+- **Conditional probability, and the trial arm by arm** (`Prob.v` +
+  `TypedExp.v` + `Rct3.v`, 2026-11-03) — `rct3_is_mixture_of_do` identifies
+  the trial's law with a **mixture** of interventional laws, and a mixture
+  cannot be un-averaged: P(Y | do(X := x)) for a *particular* x is not
+  recoverable from it. Separating the arms needs an X column, and in the
+  typed layer that is enforced rather than merely advisable — `joint_at`
+  and `fdist_log_pair` both demand an `is_measured` ticket for **both**
+  nodes, so without `TMeasure x3` the conditional cannot be **stated**.
+  - **No conditioning machinery was needed.** The decisive find:
+    infotheo's `cPr E F = Pr (E :&: F) / Pr F` applies to our events
+    *directly*, because `outcome_set` is already a `{set context dom}` and
+    the sample space is the single finType `context dom` under the single
+    law `fdist_context P`. So a conditional logged probability is a ratio
+    of two unconditional ones, and the only new content is that those two
+    are the joint and the marginal: `Pr_outcome` and `Pr_outcome_pair`,
+    both true by unfolding with no hypothesis on `e`, the nodes or the
+    graph (same character as `E_outcome_any`, which is now a two-line
+    corollary of `Pr_outcome`). `fdist_log_pair` + `cPr_outcomeE` +
+    `dbind_pair_cell` + `cPr_outcome_eq` is the whole layer.
+  - **`te_rct3_full`** = `[TRandomize x3, TMeasure x3, TMeasure y3]`, a
+    **new** protocol, not an edit to `te_rct3` (so `rct3_correct`,
+    `rct3_is_mixture_of_do`, `rct3_emp_converges` and the `te_obs3`
+    contrast all stand). Cheap because `apply_op_total` on a `Measure`
+    leaves `cur_fun` alone and only appends to the log: the solve is
+    unchanged and `rct3_X`/`rct3_Y` are reused **verbatim**, and
+    `get_assigned_value`'s first-match discipline keeps the new X entry
+    from shadowing Y's.
+  - **`rct3_full_joint`** — the headline: the trial's joint (X,Y) law is
+    `dbind (P x3) (fun x => dmap (pair x) (fdist_do ... x3 x y3))`. The
+    randomized trial is **jointly** a mixture of do-experiments, not
+    merely a mixture of their marginals. No positivity needed, and
+    `rct3_full_Y_law` recovers `rct3_is_mixture_of_do` as its Y-marginal,
+    so the joint subsumes it.
+  - **`rct3_full_cond`** — the question answered: for `P x3 x != 0`,
+    `cPr (fdist_context P) (outcome_set .. y3 y) (outcome_set .. x3 x)
+    = fdist_do .. x3 x y3 y`, i.e. **P(Y=y | X=x) in the trial IS
+    P(Y=y | do(X:=x))**. Legitimate because the logged X is `w x3`, X's own
+    exogenous slot, independent of every other slot by `fdist_context`'s
+    product form; under `te_obs3` the logged X would be `bias (w z3)` and
+    selecting on it would select on Z, which is `obs3_is_not_do_mixture`.
+  - **The LLN, stripped to an event.** Same move as 2026-10-21, one level
+    further: `measure_lln_any`'s node-and-value indexing was about naming
+    the *event*, and the proof never used which set it was. `emp_event` +
+    **`emp_event_lln`** state it for any `A : {set context dom}`;
+    `emp_freqE` recovers the per-column estimator as the instance
+    `A := outcome_set e n v`, so `measure_lln_any`/`emp_lln_any` survive as
+    corollaries. The gain: **arms** and **cells of a joint** are now in
+    range, and they are not of the form "node n logged v".
+  - **The estimator.** `emp_cond A B N` is the reported conditional
+    frequency, a quotient of two `emp_event`s. Conditioning destroys the
+    i.i.d. structure `wlln` needs (the per-arm count is itself random), so
+    both halves stay inside the i.i.d. world and the division is paid for
+    by **`ratio_close`** (`Prob.v`, pure algebra: `2*del <= b` forces
+    `b/2 <= bh`, so the estimated denominator cannot collapse, and the
+    quotient is within `4*del/b`). Then `emp_cond_bound` is an event
+    *inclusion* plus `le_Pr_setU`, and **`emp_cond_converges`** is the
+    eps-delta form with `del := min (Pr B / 2) (eps * Pr B / 8)` — the
+    first argument keeps the denominator alive, the second makes the
+    quotient bound beat `eps`.
+  - **`rct3_full_emp_cond_converges`** — the capstone: what the confounded
+    trial *reports* in the arm X = x converges to P(Y | do(X := x)), **arm
+    by arm**, strictly stronger than `rct3_emp_converges`, which converges
+    only to the mixture. The declared size is fixed at 1 in the events
+    (`Let e3`, with `e3_is_the_protocol` proving by `elab_exp_size` that
+    this is the elaboration at *every* declared size) — the same trick as
+    `rct2_var`, and what lets the conditioning event stay fixed while the
+    sample size is quantified.
+  Axioms: boolp's three only, throughout.
+  *Where positivity lives:* exactly one place, the division. `0 < P x3 x`
+  is the **overlap** condition, a statement about the numbers that no
+  well-formedness discipline can discharge — hence a hypothesis on the one
+  lemma that divides rather than a side condition baked into a
+  conditional-distribution type (that was the design choice; the ratio
+  formulation is what makes it payable once). Note `fdist_do_rct3_Y` needs
+  **no** such condition: the interventional law exists for every arm,
+  including arms of probability zero. Overlap is about *estimating* a
+  do-law, not about its existence.
+  *Still open:* `P_3`'s exogenous slot at X is a point mass on `placebo`,
+  so a *numeric* per-arm instance needs a coin with full support; the
+  theorems above are all general in `P`. And everything is still
+  **per-value** (single `v`), so the union bound over `#|dom n|` remains
+  the cheapest open item.
+  *Gotchas:* (1) `fdistmapE`'s bigop selector is `a \in preim f (pred1 b)`
+  and needs **`!inE`** (single `inE` only adds a `true &&`); `/=` does not
+  touch it. (2) infotheo's RV combinators do not reduce under unification:
+  `(X `-cst m) u` is *convertible* to `X u - m` but `apply` will not unfold
+  the function-space ring, so it needs naming as a lemma proved `by []`
+  (`trans_sub_RV_appE`). (3) `le_Pr_setU` takes the fdist **explicitly**
+  (`le_Pr_setU _ _ _`). (4) mathcomp's min lemmas here are `ge_min`/
+  `le_min`/`lt_min` (not `ge_min_l`), and `ler_wpM2l`/`ler_wpM2r` are
+  `{homo}` statements, so `apply:` them rather than `rewrite`.
+- **The interventional law, and the trial as a mixture of do-laws**
+  (`Prob.v` + `Rct3.v`, 2026-11-03) — the correctness results up to here
+  were all *pushforward* statements: `rct3_correct` says the trial's
+  outcome law factorises as a mixture over a treatment law, but nothing in
+  it mentions `do()`, so it is evidence that randomization worked rather
+  than a causal claim. This batch names the mixand.
+  - **The typed do-layer** (`Prob.v`, 3 names). `solve_do enc dec tF a v w n`
+    is `dec n (odflt 0 (Main.semantic_do (ssval a) (enc a v) G (elab tF)
+    (ssval n) (to_assign w)))`, and `fdist_do enc dec tF P a v n` is its
+    pushforward along `fdist_context P`, i.e. **P(n | do(a := v))**.
+    `solve_doE` restates it on the surgered graph/graphfun, which is the
+    form that will chain with `randomize_semantic_do`. The point is that
+    this cost **nothing new**: `semantic_do` was already a *denotation*
+    (Main.v:220), so the typed layer gets an interventional law with no new
+    program construct, no new randomness, and no new axioms — `fdist_do` is
+    the exact sibling of `fdist_node`. Note `solve_do` does not read `w a`:
+    the constant mechanism ignores parents *and* noise, so `a`'s own draw is
+    dead, which is what setting `a` should mean.
+  - **The instance** (`Rct3.v`). `Section Do3Solve` solves the surgered
+    model node by node (`do3_Z`/`do3_X`/`do3_Y`) on
+    `Interventions.do 1 G3`; two `Example`s record the surgery by
+    computation (`find_parents 1 Gd = nil`, `find_parents 2 Gd = [1;3]`).
+    Then `fdist_do_rct3_Y`: `fdist_do ... x3 t y3 = dmap (h3 t) (P z3)` —
+    setting X kills X's draw, so the only randomness left upstream of Y is
+    the confounder's **own** noise. Hence the headline
+    **`rct3_is_mixture_of_do`**: the law the protocol
+    `[Randomize X, Measure Y]` logs at Y **is** the `P x3`-mixture of the
+    interventional laws `P(Y | do(X := t))`.
+  - **The payoff.** `obs3_is_not_do_mixture`: at `P_3` the *observational*
+    protocol's logged law is **≠** that mixture. Seeing is not doing on this
+    model, as an inequation between a law the confounded design produces and
+    the causal quantity it would be mistaken for. (Proof: two lines —
+    `rct3_differs_from_obs3` read through `rct3_is_mixture_of_do`.)
+  - **The experiment level.** `rct3_emp_converges` and
+    **`rct3_emp_converges_eps_delta`**, mirroring Rct2's pair with
+    `rct3_is_mixture_of_do` naming the target: for every `eps`, `delta`
+    there is an `N0` beyond which the frequency the trial reports at Y is
+    within `eps` of the **interventional mixture** with probability
+    `≥ 1 − delta`. `rct3_var`/`rct3_varE` are the `elab_exp_size` trick
+    again. This is the first empirical statement about rct3 at all, and it
+    closes the full arc — concrete run → empirical frequency → causal
+    quantity — on a model where randomization is doing real work.
+  Axioms: boolp's three only, throughout.
+  *What this does NOT rest on:* the general randomize/do bridge.
+  `rct3_is_mixture_of_do` is proved by **computing both sides** on this
+  model. `randomize_semantic_do` (Correctness.v:227) is still the per-unit
+  statement only; its distributional lift (M5/Theorem A) needs (a) an
+  `assignments_equiv` argument reconciling the head-position draw
+  `(n,v)::U` with the slot `to_assign enc w` already holds for `n` — sound
+  because `get_assigned_value` is first-match — and (b) the `dbind` lift
+  through the mixture over the coin. So what is established is that the two
+  readings *agree on this model*, not in general.
+  *Gotchas:* `a` in `solve_do`/`fdist_do` is auto-implicit because it
+  appears in `v`'s type (`v : dom a`); fixed with explicit `Arguments`
+  after each section closes rather than `Unset Implicit Arguments`, which
+  does nothing useful mid-section since implicits are computed at section
+  close. `<>` unfolds to an arrow, so a lemma stated with `<>` makes its
+  earlier `nat` arguments implicit too — `@rct3_differs_from_obs3 N`, not
+  `rct3_differs_from_obs3 N`. And `Interventions` is **require-only** in
+  both files (it imports `Nat` and `Lists`, which shadow mathcomp names);
+  only the qualified `Interventions.do` is used.
+- **The same trial over arbitrary finite domains** (`Rct2.v`, `Section
+  Rct2Gen`, 2026-10-21) — the trial replayed at two abstract nonempty
+  finTypes `A`, `B` with points `a0`, `b0`, codes from
+  `enc_default`/`dec_default` (`enum_rank`), and `rct2_correct_gen` the
+  same mixture conclusion. The headline is that `rct2g_T` and `rct2g_R`
+  are the concrete solve proofs **verbatim**, with `enc_2K` swapped for
+  `enc_gK`: the cardinalities were never load-bearing, and the only thing
+  the proofs ever used about a domain was cancellation. Three
+  generalisations at once — `|D_R|` free, `|D_T|` free (so this is a
+  **k-arm trial**, `P t2 = dunif` being the balanced one and `|A| = 1` the
+  degenerate single-arm case), and T's pre-randomization mechanism an
+  arbitrary `bias : A -> A` instead of the constant `placebo`, which
+  sharpens the erasure claim from "erased a constant" to "erased
+  anything". Axioms: boolp's three only.
+  *Why the concrete version is kept too* (her call, 2026-10-21): the
+  canonical codes are built from `enum_rank`, which does **not reduce**,
+  so this section proves laws but can discharge nothing by
+  `reflexivity` — whereas concrete `Rct2.v` evaluates its elaboration and
+  its ordering side conditions by computation. Concrete = the one that
+  runs, abstract = the one that generalises.
+  *Not claimed:* that `rct2_correct` is an **instance** of
+  `rct2_correct_gen`. It is not — different code pairs, and nothing yet
+  proves the logged law is independent of which cancelling pair is
+  chosen. That independence follows from M5e, which gives M5e a second
+  motivation: it retroactively makes the concrete trial a corollary of the
+  abstract one.
+- **Protocol-independent concentration, and the trial at the experiment
+  level** (`TypedExp.v` + `Rct2.v`, 2026-10-21) — the correctness results
+  up to here all compared *distributions*; this is the comparison an
+  experimenter can act on. Two halves.
+  - **The hypotheses were about the target, not the probability.**
+    `measure_source_emp_lln` carries five structural premises (dag,
+    source node, single-measurement protocol, mechanism `= g`), and all
+    five are used in exactly one place: `E_outcome`, to rewrite the
+    indicator's mean as `dmap g (P n) v`. Naming the target by the
+    abstract semantics instead gives `E_outcome_any`:
+    `` `E (Ind (outcome_set e n v)) = fdist_log_val e n v ``, true by
+    unfolding for **any** experiment, **any** node, no graph assumption.
+    Hence `measure_lln_any` and **`emp_lln_any`**: for any protocol, the
+    empirical frequency of a logged value concentrates on
+    `fdist_log_val`, the population law of that same logged value. All
+    protocol-specific work is pushed into *computing* `fdist_log_val`,
+    which is exactly what each worked example does.
+  - **The instance.** `rct2_emp_converges` (Chebyshev rate) and
+    **`rct2_emp_converges_eps_delta`**: for arbitrary finite `A`/`B`,
+    arbitrary `bias` and `h`, and any allocation law, for every `eps > 0`
+    and `delta > 0` there is an `N0` beyond which the reported frequency
+    is within `eps` of the mixture with probability `≥ 1 − delta`. That
+    is convergence in probability of the concrete run's log to the
+    abstract output law of R. Proof: `rewrite -rct2_correct_gen; exact:
+    emp_lln_any`, plus archimedean arithmetic. Axioms: boolp's three only.
+  *Declared size = actual size.* First written with the declared size and
+  the sample length as two independent parameters; **corrected 2026-10-21
+  on her objection**, and she was right. The separation was a workaround,
+  not a design: in the `eps`-`delta` statement the sample size is
+  *quantified*, so the variance constant that `N0` is chosen from must not
+  depend on the `N` being quantified — and written directly it appears to,
+  since the experiment mentions `N.+1`. Decoupling the sizes dodged that;
+  the honest fix is `elab_exp_size` (`TypedExp.v`, proved `by []`):
+  elaboration reads only labels, mechanisms and ops, so two records
+  differing *only* in declared size elaborate to the **same term**. Hence
+  the indicator — and its variance — is literally size-independent, and
+  `rct2_var` names that constant once at a fixed index. The theorems now
+  run the protocol `te_rct2_g bias h N.+1` on `N.+1` units and quote
+  `te_size` as the rate, so a record whose declaration disagreed with its
+  sample is not an instance at all. *Lesson for future statements:* a
+  hyperparameter that elaboration drops is size-independent by conversion;
+  reach for that rather than for an extra parameter.
+  *No variance sign lemma needed:* infotheo proves none for `` `V ``, and
+  it turned out not to matter — `truncnS_gt` (`x < (truncn x).+1%:R`) is
+  unconditional on a `realType`, so the `eps`-`delta` rearrangement goes
+  through without `0 <= V`.
+  *Still per-value*, exactly as M5b records: this is convergence at a
+  fixed `v`, not of the empirical distribution as a whole. `#|B|` is
+  finite, so a union bound (`delta/#|B|` in each instance) upgrades it to
+  the supremum distance. Not yet formalised, and now the cheapest open
+  item.
+  *Gotcha:* `le_trans`/`lt_le_trans` need `Import Order.TTheory`;
+  `Num.Theory` alone does not supply them. The import sits **after** the
+  earlier proofs in the section, which is safe because `Import` is never
+  retroactive.
 - **The confounded randomized trial** (`Experiment/Rct3.v`, 2026-10-20) —
   the case randomization exists for. Reuses Main.v's `G_3`
   (`Z -> X`, `Z -> Y`, `X -> Y`) with all of `Prob.v`'s domains, codes and
@@ -652,6 +889,42 @@ Proposed order (dates are suggestions — adjust with supervisor):
   `rct3_differs_from_obs3` showing randomizing changes the law. Supporting
   general lemmas `fdist_context_pair` and `dmap_uncurry_prod` in `Prob.v`.
   See Status above.
+- **M5f** ✅ 2026-10-21 — **the trial at arbitrary domains, and the
+  experiment level**. `Section Rct2Gen` replays the two-node trial at
+  abstract nonempty finTypes (`rct2_correct_gen`, the k-arm trial);
+  `E_outcome_any`/`measure_lln_any`/`emp_lln_any` in `TypedExp.v` strip the
+  five structural hypotheses off the weak law by naming its target from the
+  abstract semantics; and `rct2_emp_converges_eps_delta` is the first
+  statement in the development that says the **concrete run's log
+  converges to the abstract output law** of a measured node. The concrete
+  `Rct2.v` is retained alongside the abstract one (it is the version that
+  still computes). See Status above.
+  *Still open here:* the union bound over `#|B|` to go from per-value
+  convergence to the supremum distance — the cheapest remaining item.
+- **M5g** ✅ 2026-11-03 — **the interventional law, and the trial as a
+  mixture of do-laws**. `solve_do`/`fdist_do` in `Prob.v` give the typed
+  layer `P(n | do(a := v))` out of Main.v's `semantic_do` with no new
+  construct; `rct3_is_mixture_of_do` identifies the confounded trial's
+  logged law with the `P x3`-mixture of those interventional laws;
+  `obs3_is_not_do_mixture` states the confounding bias as an inequation;
+  and `rct3_emp_converges_eps_delta` chains `emp_lln_any` onto it, so the
+  concrete run's frequencies converge to a **causal** quantity. See Status
+  above.
+  *Still open here:* the statement is per-model (both sides computed), not
+  via the distributional lift of `randomize_semantic_do` — that is M5.
+  Also still per-value (union bound over `#|B|`), and `te_rct3` has no X
+  column, so no per-arm/conditional version is available.
+- **M5h** ✅ 2026-11-03 — **conditional probability, and the trial arm by
+  arm**. `te_rct3_full` adds `TMeasure x3`; `rct3_full_joint` shows the
+  trial is *jointly* a mixture of do-experiments; `rct3_full_cond` proves
+  **P(Y|X=x) in the trial = P(Y|do(X:=x))**; the LLN is restated for an
+  arbitrary event (`emp_event_lln`), and `emp_cond_converges` /
+  `rct3_full_emp_cond_converges` carry it through the quotient, so the
+  reported per-arm frequency converges to the interventional law. Needed no
+  conditional-distribution type: infotheo's `cPr` applies to our events as
+  they stand. See Status above.
+  *Still open here:* a full-support coin for a numeric per-arm instance,
+  and the union bound over `#|dom n|` (still per-value).
 - **M5e** (next) — **general elaboration correctness**: prove
   `solve F w n = F n (w n) (fun p _ => solve F w p)`, generalising
   `measure_source_law` off parent-free nodes. Per the rediagnosis above the
@@ -728,16 +1001,32 @@ The d-separations a DAG entails, checked against data to falsify the model; reus
   - `Experiment/Prob.v` — the typed boundary (`Node`, `dom`, `context`,
     `world`, `to_assign`, `elab`) + narrow `fdist` wrappers, then the
     denotation: `fdist_context` (Part 5) and `fdist_world` (Part 6).
+    `solve_do`/`solve_doE`/`fdist_do` are the surgered siblings of
+    `solve`/`fdist_node`, i.e. `P(n | do(a := v))`; `ratio_close` and
+    `quarter_of_eighth` are the arithmetic the conditional estimator needs.
   - `Experiment/TypedExp.v` — the typed experiment surface (D12):
     `toperation`/`elab_op`, `texperiment`/`elab_exp`, and the transfer
-    lemmas (`elab_op_wf`, `measures_last_elab`, `elab_exp_wf`).
+    lemmas (`elab_op_wf`, `elab_exp_wf`). Then the laws: `fdist_log_val`,
+    `fdist_log_pair`, `Pr_outcome`/`Pr_outcome_pair`/`cPr_outcomeE`/
+    `cPr_outcome_eq` (conditioning, via infotheo's `cPr`), and the
+    concentration layer `emp_event`/`emp_event_lln`/`emp_cond`/
+    `emp_cond_bound`/`emp_cond_converges`.
   - `Experiment/Rct2.v` — the two-node randomized trial worked end to end
     (`G2`, `tF_2`, `te_rct2`, `rct2_correct`); the depth-2 case of
-    elaboration correctness.
+    elaboration correctness. Then `Section Rct2Gen`: the same trial at
+    arbitrary nonempty finite domains (`rct2_correct_gen`, the k-arm
+    trial) and the experiment-level convergence statements
+    (`rct2_emp_converges`, `rct2_emp_converges_eps_delta`, with
+    `rct2_var`/`rct2_varE` naming the size-independent variance constant).
   - `Experiment/Rct3.v` — the CONFOUNDED trial on `G_3`: `te_rct3` vs
     `te_obs3` on one model, `rct3_correct` / `obs3_log_law`, and
     `rct3_differs_from_obs3`. Depth-3 solve, two-parent lookup, and the
-    only numeric computation in the development.
+    only numeric computation in the development. Then `Section Do3Solve`
+    and `Section Do3Law`: the surgered solve, `fdist_do_rct3_Y`,
+    `rct3_is_mixture_of_do`, `obs3_is_not_do_mixture`, and the
+    experiment-level `rct3_emp_converges`/`rct3_emp_converges_eps_delta`.
+    Then `te_rct3_full` (which also measures X) with `rct3_full_joint`,
+    `rct3_full_cond` and `rct3_full_emp_cond_converges`: the per-arm route.
   - `Experiment/Correctness.v` — per-world core (`randomize_semantic_do`), RCT syntactic correctness; later Theorems A and B.
   - `attic/` — retired prototypes, not in `_CoqProject` (`Spike.v`).
   - `examples/` — encodings of historical/natural experiments (future).

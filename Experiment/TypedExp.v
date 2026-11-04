@@ -106,13 +106,6 @@ constructor.
 - by apply: IH; exact: (List.Forall_inv_tail Hl).
 Qed.
 
-(* --- the ordering discipline transfers verbatim ----------------------- *)
-(* [elab_op] preserves which KIND each operation is, so [Main.measures_last]
-   on the elaborated program is the typed check on the typed one. *)
-
-Definition tis_surgery (op : toperation) : bool :=
-  match op with TIntervene _ _ | TRandomize _ => true | _ => false end.
-
 (* the nodes a protocol measures, in program order.  These are the only
    nodes a run can produce data for, so they index the dataset below. *)
 Fixpoint tmeasured (p : list toperation) : list (Node G) :=
@@ -124,37 +117,6 @@ Fixpoint tmeasured (p : list toperation) : list (Node G) :=
       | _ => tmeasured rest
       end
   end.
-
-Definition tis_measure (op : toperation) : bool :=
-  match op with TMeasure _ => true | _ => false end.
-
-Fixpoint tmeasures_last (p : list toperation) : bool :=
-  match p with
-  | nil => true
-  | op :: rest =>
-      if tis_measure op
-      then List.forallb (fun o => negb (tis_surgery o)) rest
-      else tmeasures_last rest
-  end.
-
-Lemma is_measure_elab op : Main.is_measure (elab_op op) = tis_measure op.
-Proof. by case: op. Qed.
-
-Lemma is_surgery_elab op : Main.is_surgery (elab_op op) = tis_surgery op.
-Proof. by case: op. Qed.
-
-Lemma forallb_surgery_elab (p : list toperation) :
-  List.forallb (fun o => negb (Main.is_surgery o)) (elab_ops p)
-  = List.forallb (fun o => negb (tis_surgery o)) p.
-Proof. by elim: p => [|op p IH] //=; rewrite is_surgery_elab IH. Qed.
-
-Lemma measures_last_elab (p : list toperation) :
-  Main.measures_last (elab_ops p) = tmeasures_last p.
-Proof.
-elim: p => [|op p IH] //=.
-rewrite is_measure_elab; case: (tis_measure op); last exact: IH.
-exact: forallb_surgery_elab.
-Qed.
 
 (* --- the typed experiment --------------------------------------------- *)
 (* Graph, domains and codes are fixed by the section; a typed experiment
@@ -203,19 +165,16 @@ Definition elab_exp (te : texperiment) : Main.experiment :=
    one.  Note what is NOT a hypothesis: [dag_fun_compatible] comes free from
    [elab_compatible], and every node-membership side condition is discharged
    by typing.  What remains are the genuinely semantic obligations -- the
-   graph is a wf dag with treatments and responses, reads are measurable,
-   and measurements come after surgery. *)
+   graph is a wf dag with treatments and responses, and reads are
+   measurable. *)
 Theorem elab_exp_wf (te : texperiment) :
   Main.wf_aug_graph (te_aug te) ->
   List.Forall (twf_operation (te_aug te)) (te_ops te) ->
-  tmeasures_last (te_ops te) = true ->
   Main.experiment_wf (elab_exp te).
 Proof.
-move=> Hag Hops Hml; split; first exact: Hag.
+move=> Hag Hops; split; first exact: Hag.
 split; last exact: elab_compatible.
-split.
-- by apply: elab_ops_wf.
-- by rewrite measures_last_elab.
+by apply: elab_ops_wf.
 Qed.
 
 End TypedOps.
@@ -236,10 +195,6 @@ Definition trct_3 : list (toperation dom_3) :=
 Example trct_3_elaborates :
   elab_ops enc_3 trct_3
   = (Main.Randomize 1 :: Main.Measure 2 :: nil)%N.
-Proof. reflexivity. Qed.
-
-(* the ordering discipline is satisfied, checked on the typed side *)
-Example trct_3_measures_last : tmeasures_last trct_3 = true.
 Proof. reflexivity. Qed.
 
 (* a typed intervention: the value is a [treatment], not a code.  [drug]
@@ -554,6 +509,357 @@ have Hrv :
   by rewrite /GRing.scale /= mulrC.
 rewrite Hrv Hsz.
 exact: measure_source_lln.
+Qed.
+
+(* ===================================================================== *)
+(* THE SAME BOUND, FOR AN ARBITRARY PROTOCOL                              *)
+(* --------------------------------------------------------------------- *)
+(* [measure_source_emp_lln] above carries five structural hypotheses: the *)
+(* graph is a dag, the measured node is a SOURCE, the protocol is exactly *)
+(* one measurement, and that node's mechanism is [g].  They are all there *)
+(* to identify the TARGET of the convergence, via [measure_source_law].   *)
+(* None of them is needed by the probability.                            *)
+(*                                                                        *)
+(* Factoring them out gives the general statement: for ANY experiment and *)
+(* ANY node, the empirical frequency of a logged value concentrates on    *)
+(* [fdist_log_val], the population law of that same logged value.  The    *)
+(* two semantics are compared at their own level of generality, and the   *)
+(* protocol-specific work is pushed entirely into COMPUTING               *)
+(* [fdist_log_val] for the protocol at hand -- which is what each worked  *)
+(* example does.                                                          *)
+(*                                                                        *)
+(* The pivot is [E_outcome_any], which is [E_outcome] with the appeal to  *)
+(* [measure_source_law] deleted: the mean of the indicator of the event   *)
+(* that this unit logged v is the law of the logged value AT v, by        *)
+(* unfolding alone.                                                      *)
+(* This is the precise sense in which the empirical/population comparison *)
+(* is independent of the experiment: the estimator's target is READ OFF   *)
+(* the abstract semantics, not derived from the protocol.                *)
+(* ===================================================================== *)
+
+(* ELABORATION IGNORES THE DECLARED SIZE.  [te_size] is a hyperparameter
+   of the protocol, not part of the model it elaborates to, so two records
+   differing only in their declared size elaborate to the SAME experiment --
+   by conversion, hence a one-line proof.  This is what lets a statement
+   quantified over sample sizes keep its constants at a fixed index: the
+   variance of an indicator of a logged value cannot depend on the declared
+   size, because the experiment it is computed from does not. *)
+Lemma elab_exp_size (labels : node -> Main.node_label) (F : tgraphfun dom)
+    (ops : list (@toperation G dom)) (M M' : nat) :
+  elab_exp enc dec (mk_texperiment labels F ops M)
+  = elab_exp enc dec (mk_texperiment labels F ops M').
+Proof. by []. Qed.
+
+(* ===================================================================== *)
+(* JOINT AND CONDITIONAL LOGGED LAWS                                      *)
+(* --------------------------------------------------------------------- *)
+(* [fdist_log_val] is one node's column law, and every result up to here  *)
+(* is about one such marginal.  A causal query such as the outcome law in  *)
+(* the arm X = x is not a marginal: it needs two columns of the SAME       *)
+(* units, which is what [joint_at] provides on the data side.  This block  *)
+(* is the population counterpart.                                         *)
+(*                                                                        *)
+(* No conditioning machinery is introduced.  infotheo's [cPr E F =         *)
+(* Pr (E :&: F) / Pr F] already applies, because our events are sets of    *)
+(* CONTEXTS -- one finType, one law [fdist_context P] -- so a conditional  *)
+(* logged probability is a ratio of two unconditional ones and nothing     *)
+(* more.  What has to be proved is only that the two unconditional ones    *)
+(* are the joint and the marginal logged laws, which is [Pr_outcome] and   *)
+(* [Pr_outcome_pair].  Both are true by unfolding: like                    *)
+(* [E_outcome_any], they assume nothing about the experiment, the nodes,   *)
+(* or the graph.                                                          *)
+(*                                                                        *)
+(* Positivity appears exactly once, in [cPr_outcome_eq], and it is a       *)
+(* condition on the NUMBERS -- no well-formedness discipline can discharge *)
+(* it.  That is why it is a hypothesis on the one lemma that divides,      *)
+(* rather than a side condition baked into a conditional-distribution      *)
+(* type.                                                                  *)
+(* ===================================================================== *)
+
+(* the joint law of two nodes' logged values, over the same unit *)
+Definition fdist_log_pair (e : Main.experiment) (m n : Node G)
+  : R.-fdist (dom m * dom n)%type :=
+  dmap (fun w : context dom => (log_val e w m, log_val e w n)) (fdist_context P).
+
+(* its marginals are the per-node logged laws *)
+Lemma fdist_log_pair_fst (e : Main.experiment) (m n : Node G) :
+  dmap (fun p : dom m * dom n => p.1) (fdist_log_pair e m n) = fdist_log_val e m.
+Proof.
+rewrite /fdist_log_pair /fdist_log_val dmap_comp; exact: dmap_eq.
+Qed.
+
+Lemma fdist_log_pair_snd (e : Main.experiment) (m n : Node G) :
+  dmap (fun p : dom m * dom n => p.2) (fdist_log_pair e m n) = fdist_log_val e n.
+Proof.
+rewrite /fdist_log_pair /fdist_log_val dmap_comp; exact: dmap_eq.
+Qed.
+
+(* the mass of "this unit logged v at n" IS the logged law at v *)
+Lemma Pr_outcome (e : Main.experiment) (n : Node G) (v : dom n) :
+  Pr (fdist_context P) (@outcome_set e n v) = fdist_log_val e n v.
+Proof.
+rewrite /Pr /fdist_log_val /dmap fdistmapE.
+by apply: eq_bigl => w; rewrite !inE.
+Qed.
+
+(* and the mass of the CELL "logged u at m and v at n" is the joint law *)
+Lemma Pr_outcome_pair (e : Main.experiment) (m n : Node G)
+    (u : dom m) (v : dom n) :
+  Pr (fdist_context P) (@outcome_set e m u :&: @outcome_set e n v)
+  = fdist_log_pair e m n (u, v).
+Proof.
+rewrite /Pr /fdist_log_pair /dmap fdistmapE.
+by apply: eq_bigl => w; rewrite !inE xpair_eqE.
+Qed.
+
+(* THE CONDITIONAL LOGGED LAW, as a ratio.  Hypothesis-free: this is just
+   [cPr]'s definition with the two masses named. *)
+Lemma cPr_outcomeE (e : Main.experiment) (m n : Node G)
+    (u : dom m) (v : dom n) :
+  cPr (fdist_context P) (@outcome_set e n v) (@outcome_set e m u)
+  = fdist_log_pair e m n (u, v) / fdist_log_val e m u.
+Proof.
+by rewrite /cPr setIC Pr_outcome_pair Pr_outcome.
+Qed.
+
+(* the mass a factorised joint puts on one cell: arm mass times the
+   outcome mass that arm's kernel assigns *)
+Lemma dbind_pair_cell (m n : Node G) (d : R.-fdist (dom m))
+    (k : dom m -> R.-fdist (dom n)) (u : dom m) (v : dom n) :
+  dbind d (fun a => dmap (fun b => (a, b)) (k a)) (u, v) = d u * k u v.
+Proof.
+rewrite /dbind fdistbindE (bigD1 u) //= big1; last first.
+  move=> i Hiu; rewrite /dmap fdistmapE big_pred0 ?mulr0 // => b.
+  by rewrite !inE xpair_eqE (negbTE Hiu).
+rewrite addr0 /dmap fdistmapE (eq_bigl (fun a => a == v)); last first.
+  by move=> a; rewrite !inE xpair_eqE eqxx.
+by rewrite big_pred1_eq.
+Qed.
+
+(* ...and when the conditioning arm has positive mass, a factorised joint
+   gives the conditional outright.  This is the shape every per-arm claim
+   in the development will take: show the joint draws the arm and then
+   draws the outcome from that arm kernel, and the conditional in arm u is
+   the kernel at u.  The division is the only place positivity is used. *)
+Lemma cPr_outcome_eq (e : Main.experiment) (m n : Node G)
+    (u : dom m) (v : dom n) (k : dom m -> R.-fdist (dom n)) :
+  fdist_log_val e m u != 0 ->
+  fdist_log_pair e m n
+  = dbind (fdist_log_val e m) (fun a => dmap (fun b => (a, b)) (k a)) ->
+  cPr (fdist_context P) (@outcome_set e n v) (@outcome_set e m u) = k u v.
+Proof.
+move=> Hpos Hjoint; rewrite cPr_outcomeE Hjoint dbind_pair_cell.
+by rewrite mulrAC (divff Hpos) mul1r.
+Qed.
+
+(* ===================================================================== *)
+(* CONCENTRATION FOR AN ARBITRARY EVENT ABOUT A UNIT                      *)
+(* --------------------------------------------------------------------- *)
+(* [measure_lln_any] below is indexed by a node and a value, but its      *)
+(* proof never uses what [outcome_set e n v] IS -- only that it is a set  *)
+(* of contexts whose mass is the target.  So the indexing is about naming *)
+(* the event, exactly as the five structural hypotheses it already shed   *)
+(* were about naming the target.  Strip it too and the statement covers   *)
+(* every event an experimenter can tabulate from a unit's log:            *)
+(*                                                                        *)
+(*   - one cell of one column,    [outcome_set e n v]                     *)
+(*   - the ARM of a trial,        [outcome_set e X x]                     *)
+(*   - a CELL OF THE JOINT,       [outcome_set e X x :&: outcome_set e Y y]*)
+(*                                                                        *)
+(* The last two are what a per-arm or conditional estimate is built from,  *)
+(* and they are not of the form "node n logged v", so the general form is  *)
+(* what makes them reachable at all.  [emp_freq] is recovered as the       *)
+(* instance [A := outcome_set e n v], so nothing is lost.                 *)
+(* ===================================================================== *)
+
+(* the fraction of the sample's units lying in A: the estimator for any
+   tabulated event, and definitionally the scaled i.i.d. sum *)
+Definition emp_event (A : {set context dom}) (N : nat)
+  : {RV (fdist_sample N.+1) -> R^o} :=
+  (@sum_iid R (context dom) (fdist_context P) N.+1 (Ind A)) `/ N.+1.
+
+(* THE WEAK LAW, with nothing named but the event.  [E_Ind] replaces
+   [E_outcome_any]: the mean of an indicator is the mass of its event, and
+   that is the whole structural input. *)
+Theorem emp_event_lln (A : {set context dom}) (N : nat) (eps : R) :
+  0 < eps ->
+  `Pr[ (normr `o ((@emp_event A N) `-cst (Pr (fdist_context P) A))) >= eps ]
+  <= `V (Ind A : {RV (fdist_context P) -> R^o}) / (N.+1%:R * eps ^+ 2).
+Proof.
+move=> Heps.
+set XA := Ind A.
+apply: (@wlln _ _ _ _ (\row_(i < N.+1) XA) (Pr (fdist_context P) A) _ (`V XA)
+               _ _ (sum_iidE N XA) _ Heps).
+- by move=> i; rewrite mxE /XA E_Ind.
+- by move=> i; rewrite mxE.
+Qed.
+
+(* --- and the node-and-value form as an instance ----------------------- *)
+
+Lemma E_outcome_any (e : Main.experiment) (n : Node G) (v : dom n) :
+  `E (Ind (@outcome_set e n v) : {RV (fdist_context P) -> R^o})
+  = fdist_log_val e n v.
+Proof. by rewrite E_Ind Pr_outcome. Qed.
+
+(* [emp_freq], the per-column estimator, IS [emp_event] at that column's
+   cell -- so every event-level result above applies to it *)
+Lemma emp_freqE (e : Main.experiment) (n : Node G) (v : dom n) (N : nat) :
+  @emp_freq e n v N = @emp_event (@outcome_set e n v) N.
+Proof.
+apply: boolp.funext => s.
+rewrite /emp_freq /log_sample.
+rewrite (emp_rV_sum_iid (fdist_context P) (fun w => log_val e w n) v s).
+by rewrite /emp_event /GRing.scale /= mulrC.
+Qed.
+
+(* the sample-mean form, hypothesis-free *)
+Theorem measure_lln_any (e : Main.experiment) (n : Node G) (v : dom n)
+    (N : nat) (eps : R) :
+  0 < eps ->
+  `Pr[ (normr `o
+        ((@sum_iid R (context dom) (fdist_context P) N.+1
+            (Ind (@outcome_set e n v)) `/ N.+1)
+         `-cst (fdist_log_val e n v))) >= eps ]
+  <= `V (Ind (@outcome_set e n v) : {RV (fdist_context P) -> R^o})
+     / (N.+1%:R * eps ^+ 2).
+Proof.
+move=> Heps; rewrite -Pr_outcome.
+exact: (emp_event_lln (@outcome_set e n v) N Heps).
+Qed.
+
+(* THE EXPERIMENT-LEVEL COMPARISON.  The empirical frequency that an
+   experimenter reports from a run of [e] on [N+1] units is within [eps] of
+   the population law of the same logged value, except on an event of
+   probability at most [V / ((N+1) eps^2)].  No hypothesis on [e], on [n],
+   or even on the graph: this is the concrete semantics meeting the
+   abstract one, with nothing about the protocol assumed. *)
+Theorem emp_lln_any (e : Main.experiment) (n : Node G) (v : dom n)
+    (N : nat) (eps : R) :
+  0 < eps ->
+  `Pr[ (normr `o ((@emp_freq e n v N) `-cst (fdist_log_val e n v))) >= eps ]
+  <= `V (Ind (@outcome_set e n v) : {RV (fdist_context P) -> R^o})
+     / (N.+1%:R * eps ^+ 2).
+Proof.
+move=> Heps; rewrite emp_freqE -Pr_outcome.
+exact: (emp_event_lln (@outcome_set e n v) N Heps).
+Qed.
+
+
+(* ===================================================================== *)
+(* THE CONDITIONAL ESTIMATOR                                              *)
+(* --------------------------------------------------------------------- *)
+(* [emp_cond A B] is the number an experimenter reports when asked for a  *)
+(* conditional frequency: among the units in B, the fraction also in A.    *)
+(* It is a quotient of two [emp_event]s, so both halves are i.i.d.         *)
+(* averages that [emp_event_lln] already controls, and the division is     *)
+(* paid for separately by [ratio_close] -- which is the point of that      *)
+(* formulation, since conditioning itself would break the i.i.d.           *)
+(* structure (the number of units in B is random).                         *)
+(*                                                                        *)
+(* Positivity of the conditioning event is needed and is exactly OVERLAP:  *)
+(* an arm no unit was assigned to has nothing to condition on.  Note what  *)
+(* it is NOT needed for -- the population conditional [cPr] is defined     *)
+(* regardless, and so is an interventional law (see [Prob.fdist_do]).      *)
+(* Overlap is about ESTIMATING a conditional, not about its existence.     *)
+(* ===================================================================== *)
+
+Import Order.TTheory Num.Theory.
+
+(* applying a pointwise-subtracted random variable.  True by conversion;
+   named only so that [rewrite] can use it, since unification will not
+   unfold the function-space ring on its own. *)
+Lemma trans_sub_RV_appE (U : finType) (d : R.-fdist U)
+    (X : {RV d -> R^o}) (m : R) (u : U) :
+  (X `-cst m) u = X u - m.
+Proof. by []. Qed.
+
+Definition emp_cond (A B : {set context dom}) (N : nat)
+  : {RV (fdist_sample N.+1) -> R^o} :=
+  fun s => @emp_event (A :&: B) N s / @emp_event B N s.
+
+(* CHEBYSHEV FOR THE QUOTIENT.  If both halves are within [del] of their
+   targets then the quotient is within [4*del/Pr B] of [cPr]; so the event
+   that the quotient is OFF by [eps] is contained in the union of the two
+   events that a half is off by [del], and a union bound finishes it. *)
+Theorem emp_cond_bound (A B : {set context dom}) (N : nat) (eps del : R) :
+  0 < del -> 2 * del <= Pr (fdist_context P) B ->
+  4 * del / Pr (fdist_context P) B < eps ->
+  `Pr[ (normr `o ((@emp_cond A B N) `-cst (cPr (fdist_context P) A B)))
+       >= eps ]
+  <= `V (Ind (A :&: B) : {RV (fdist_context P) -> R^o}) / (N.+1%:R * del ^+ 2)
+   + `V (Ind B : {RV (fdist_context P) -> R^o}) / (N.+1%:R * del ^+ 2).
+Proof.
+move=> Hdel Hdb Heps.
+have Hb : 0 < Pr (fdist_context P) B
+  by apply: lt_le_trans Hdb; rewrite mulr_gt0.
+have Hab : Pr (fdist_context P) (A :&: B) <= Pr (fdist_context P) B
+  by apply: subset_Pr; exact: subsetIr.
+have Ha0 : 0 <= Pr (fdist_context P) (A :&: B) by exact: Pr_ge0.
+apply: le_trans (_ : Pr (fdist_sample N.+1)
+     ([set s | del <= `|@emp_event (A :&: B) N s
+                        - Pr (fdist_context P) (A :&: B)|]
+      :|: [set s | del <= `|@emp_event B N s - Pr (fdist_context P) B|])
+     <= _).
+  apply: subset_Pr; apply/subsetP => s.
+  rewrite !inE /comp_RV trans_sub_RV_appE => Hs.
+  apply/orP.
+  have [H1|H1] := lerP del `|@emp_event (A :&: B) N s
+                             - Pr (fdist_context P) (A :&: B)|;
+    first by left.
+  have [H2|H2] := lerP del `|@emp_event B N s - Pr (fdist_context P) B|;
+    first by right.
+  move: Hs; rewrite leNgt => /negP []; apply: le_lt_trans Heps.
+  rewrite /emp_cond /cPr.
+  exact: (ratio_close Ha0 Hab Hb Hdb (ltW H1) (ltW H2)).
+apply: (le_trans (le_Pr_setU _ _ _)).
+by apply: lerD; [exact: (emp_event_lln (A :&: B) N Hdel)
+                | exact: (emp_event_lln B N Hdel)].
+Qed.
+
+(* CONVERGENCE OF THE CONDITIONAL ESTIMATOR.  For any tolerance and any
+   confidence there is a sample size beyond which the reported conditional
+   frequency is within [eps] of the population conditional with probability
+   at least [1 - delta].  The [del] that does the work is
+   [min (Pr B / 2) (eps * Pr B / 8)]: the first argument keeps the
+   estimated denominator away from zero, the second makes the quotient
+   bound beat [eps]. *)
+Corollary emp_cond_converges (A B : {set context dom}) (eps delta : R) :
+  0 < eps -> 0 < delta -> 0 < Pr (fdist_context P) B ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    `Pr[ (normr `o ((@emp_cond A B N) `-cst (cPr (fdist_context P) A B)))
+         >= eps ]
+    <= delta.
+Proof.
+move=> Heps Hdelta Hb.
+set b := Pr (fdist_context P) B.
+set del := Order.min (b / 2) (eps * b / 8).
+have H2 : (0 : R) < 2 by rewrite ltr0n.
+have H8 : (0 : R) < 8 by rewrite ltr0n.
+have Hdel : 0 < del.
+  rewrite lt_min; apply/andP; split; first exact: (divr_gt0 Hb H2).
+  exact: (divr_gt0 (mulr_gt0 Heps Hb) H8).
+have Hdb : 2 * del <= b.
+  rewrite mulrC -ler_pdivlMr //; by rewrite ge_min lexx.
+have Hq : 4 * del / b < eps.
+  apply: le_lt_trans (_ : 4 * (eps * b / 8) / b < eps).
+    apply: ler_wpM2r; first by rewrite invr_ge0 ltW.
+    apply: ler_wpM2l; first by rewrite ler0n.
+    by rewrite ge_min lexx orbT.
+  have Hb0 : b != 0 by rewrite gt_eqF.
+  rewrite quarter_of_eighth mulrAC (mulfK Hb0).
+  by rewrite ltr_pdivrMr // ltr_pMr // ltr1n.
+set C := `V (Ind (A :&: B) : {RV (fdist_context P) -> R^o})
+       + `V (Ind B : {RV (fdist_context P) -> R^o}).
+have Hpos : 0 < delta * del ^+ 2 by rewrite mulr_gt0 // exprn_gt0.
+exists (truncn (C / (delta * del ^+ 2))) => N HN.
+apply: (le_trans (@emp_cond_bound A B N eps del Hdel Hdb Hq)).
+rewrite -mulrDl -/C.
+have Hx : C / (delta * del ^+ 2) < N.+1%:R.
+  apply: (lt_le_trans (truncnS_gt _)).
+  by rewrite ler_nat ltnS.
+move: Hx; rewrite ltr_pdivrMr // => Hlt.
+rewrite ler_pdivrMr; last by rewrite mulr_gt0 // exprn_gt0.
+by rewrite mulrCA; exact: ltW.
 Qed.
 
 (* ===================================================================== *)

@@ -10,6 +10,9 @@ From DAGs Require Import Basics_Constr Descendants CycleDetection.
    mathcomp's [seq.index] used in [elab]. *)
 From Utils Require List_Basics.
 From CausalDiagrams Require Import Assignments.
+(* Require-only: [Interventions] imports [Nat] and [Lists], whose names
+   would shadow mathcomp's.  Only the qualified [Interventions.do] is used. *)
+From CausalDiagrams Require Interventions.
 From Semantics Require Import FunctionRepresentation FindValue EquateValues.
 From Experiment Require Main.
 
@@ -61,6 +64,25 @@ Lemma dmap_comp {R : realType} {A B C : finType}
   (g : B -> C) (f : A -> B) (P : R.-fdist A) :
   dmap g (dmap f P) = dmap (g \o f) P.
 Proof. by rewrite /dmap fdistmap_comp. Qed.
+
+(* pushing a map through a mixture is pushing it through each mixand: the
+   monad law [fmap] commutes with [bind], needed to marginalise a joint
+   that has been written as "draw the first, then the second" *)
+Lemma dmap_dbind {R : realType} {A B C : finType} (g : B -> C)
+  (P : R.-fdist A) (k : A -> R.-fdist B) :
+  dmap g (dbind P k) = dbind P (fun a => dmap g (k a)).
+Proof. by rewrite /dmap /dbind /fdistmap fdistbindA. Qed.
+
+(* pairing with a fixed first component and then projecting it away is the
+   identity -- the second marginal of a one-armed joint *)
+Lemma dmap_pair_snd {R : realType} {A B : finType} (a : A) (P : R.-fdist B) :
+  dmap (fun p : A * B => p.2) (dmap (fun b => (a, b)) P) = P.
+Proof.
+rewrite dmap_comp.
+have -> : (fun p : A * B => p.2) \o (fun b => (a, b)) = id
+  by apply: functional_extensionality.
+by rewrite /dmap fdistmap_id.
+Qed.
 
 (* Pushing a two-argument function through a PRODUCT law is the same as
    drawing the first argument and then pushing the second: the product
@@ -264,6 +286,84 @@ by rewrite inE IH ?orbT.
 Qed.
 
   (* dom n <-> assignments nat   *)
+
+(* ===================================================================== *)
+(* A RATIO OF TWO ESTIMATES                                               *)
+(* --------------------------------------------------------------------- *)
+(* A conditional frequency is a quotient of two counts, and conditioning  *)
+(* destroys the i.i.d. structure a weak law needs -- the number of units  *)
+(* in an arm is itself random.  The standard way round is to keep both    *)
+(* halves of the quotient inside the i.i.d. world and pay for the         *)
+(* division separately, with a purely algebraic bound: if the numerator   *)
+(* and the denominator are each within [del] of their targets, and [del]  *)
+(* is small compared with the target denominator, then the quotient is     *)
+(* within [4*del/b] of the target quotient.                               *)
+(*                                                                        *)
+(* No probability appears here.  The hypothesis [2*del <= b] is what keeps *)
+(* the estimated denominator away from zero (it forces [b/2 <= bh]), and   *)
+(* [a <= b] holds automatically when the numerator's event is contained in *)
+(* the denominator's.                                                     *)
+(* ===================================================================== *)
+
+Section RatioClose.
+Import GRing.Theory Order.TTheory Num.Def Num.Theory.
+Local Open Scope ring_scope.
+Variable R : realType.
+
+Lemma ratio_close (a b ah bh del : R) :
+  0 <= a -> a <= b -> 0 < b -> 2 * del <= b ->
+  `|ah - a| <= del -> `|bh - b| <= del ->
+  `|ah / bh - a / b| <= 4 * del / b.
+Proof.
+move=> Ha Hab Hb Hdb Hah Hbh.
+have Hd0 : 0 <= del := le_trans (normr_ge0 _) Hah.
+have Hd2 : del <= b / 2 by rewrite ler_pdivlMr // mulrC.
+(* the estimated denominator cannot collapse *)
+have Hbh2 : b / 2 <= bh.
+  have H0 : b - bh <= b / 2.
+    apply: le_trans Hd2; apply: le_trans (_ : `|b - bh| <= del).
+      exact: ler_norm.
+    by rewrite distrC.
+  by move: H0; rewrite lerBlDr {1}(splitr b) lerD2l.
+have Hbhp : 0 < bh by apply: lt_le_trans Hbh2; rewrite divr_gt0.
+have Hb2bh : b <= 2 * bh.
+  have H2 : b <= bh * 2 by rewrite -ler_pdivrMr //.
+  by rewrite mulrC.
+have Hb0 : b != 0 by rewrite gt_eqF.
+have Hbh0 : bh != 0 by rewrite gt_eqF.
+(* one common denominator *)
+have Hnum : (ah - a) * b - a * (bh - b) = ah * b - a * bh.
+  by rewrite mulrBl mulrBr opprB addrA subrK.
+have Hkey : ah / bh - a / b = ((ah - a) * b - a * (bh - b)) / (bh * b).
+  rewrite Hnum.
+  have -> : ah / bh - a / b = ah / bh + (- a) / b by rewrite mulNr.
+  by rewrite addf_div // mulNr.
+rewrite Hkey normrM normfV (ger0_norm (_ : 0 <= bh * b)); last first.
+  by rewrite mulr_ge0 ?ltW.
+(* the numerator is within del*b of zero, twice over *)
+have Hnb : `|(ah - a) * b - a * (bh - b)| <= del * b + del * b.
+  apply: le_trans (ler_normB _ _) _.
+  rewrite !normrM (ger0_norm (ltW Hb)) (ger0_norm Ha); apply: lerD.
+  - exact: (ler_pM (normr_ge0 _) (ltW Hb) Hah (lexx b)).
+  - rewrite -[del * b]mulrC; exact: (ler_pM Ha (normr_ge0 _) Hab Hbh).
+apply: le_trans (_ : (del * b + del * b) / (bh * b) <= _).
+  by rewrite ler_wpM2r // invr_ge0 mulr_ge0 ?ltW.
+(* and 2*del*b / (bh*b) = 2*del/bh <= 4*del/b, because b <= 2*bh *)
+rewrite ler_pdivrMr ?mulr_gt0 // (_ : 4 * del / b * (bh * b) = 4 * del * bh);
+  last by rewrite mulrACA mulVf // mulr1.
+rewrite [X in _ <= X]mulrC (_ : bh * (4 * del) = 2 * del * bh + 2 * del * bh);
+  last by rewrite mulrC -mulrDl -mulrDl -natrD.
+apply: lerD; rewrite -mulrA mulrCA; exact: (ler_wpM2l Hd0 Hb2bh).
+Qed.
+
+(* 4 * (u/8) = u/2, the one numeral identity the eps-delta choice needs *)
+Lemma quarter_of_eighth (u : R) : 4 * (u / 8) = u / 2.
+Proof.
+rewrite mulrA; apply/eqP; rewrite eqr_div ?pnatr_eq0 //.
+by rewrite mulrAC -natrM mulrC.
+Qed.
+
+End RatioClose.
 
 Section Boundary.
 Variable G : graph.
@@ -521,7 +621,44 @@ rewrite /solve /Main.eval Hval.
 exact: encK.
 Qed.
 
+(* --- intervening: the typed do-surgery ------------------------------- *)
+
+(* [solve] above runs the model as given.  [solve_do a v] runs the model
+   SURGERED at a: a's mechanism is replaced by the constant v and a's
+   incoming edges are cut.  Both pieces are Main.v's [semantic_do], which
+   is a DENOTATION -- a second way to read the same model, not an
+   operation a protocol performs.  That matters here: the typed layer gets
+   an interventional law without any new program construct.
+
+   Note what [solve_do] does NOT read: a's own exogenous slot [w a].  The
+   constant mechanism ignores both parents and noise, so a's draw is dead
+   -- which is exactly what "setting a" should mean.  The rest of the
+   context is untouched, so every OTHER node still runs on its own noise. *)
+Definition solve_do (tF : tgraphfun) (a : Node) (v : dom a)
+    (w : context) (n : Node) : dom n :=
+  dec n (odflt 0 (Main.semantic_do (ssval a) (enc a v) G (elab tF)
+                    (ssval n) (to_assign w))).
+
+(* [solve_do] is [solve] on the surgered model: same total-evaluator
+   shape, so the [0] default is dead for the same reason (see
+   [find_value_to_assign], which transfers because [do] preserves the
+   node list).  Stated so proofs can unfold either side. *)
+Lemma solve_doE (tF : tgraphfun) (a : Node) (v : dom a)
+    (w : context) (n : Node) :
+  @solve_do tF a v w n
+  = dec n (Main.eval (Interventions.do (ssval a) G)
+             (Main.do_graphfun (ssval a) (enc a v) (elab tF))
+             (ssval n) (to_assign w)).
+Proof.
+rewrite /solve_do /Main.semantic_do /Main.eval.
+by case: (find_value _ _ _ _ _).
+Qed.
+
 End Boundary.
+
+(* [a] appears in [v]'s type, so the auto-implicit rule would hide it;
+   both stay explicit, as [solve]'s arguments do. *)
+Arguments solve_do {G dom} enc dec tF a v w n.
 
 (* generic codes for any finType (lemma-world: [enum] does not compute;
    hand-write codes when an example must run by reflexivity) *)
@@ -938,7 +1075,22 @@ rewrite /fdist_world /fdist_node dmap_comp; apply: dmap_eq => w.
 by rewrite /= /world_of ffunE.
 Qed.
 
+(* THE INTERVENTIONAL LAW.  [fdist_node] above is what the model says a
+   node's value looks like when the model is left alone; this is what it
+   looks like when a is HELD at v.  Same exogenous law, same mechanisms
+   everywhere but a, surgered solve: so P(n | do(a := v)) is again a
+   pushforward and nothing more, and in particular it needs no new
+   randomness and no new program operation.
+
+   This is the object a causal query asks about.  Nothing here connects it
+   to any PROTOCOL yet -- that is what a trial has to earn, and what
+   [Rct3.v] earns for the confounded trial. *)
+Definition fdist_do (a : Node G) (v : dom a) (n : Node G) : R.-fdist (dom n) :=
+  dmap (fun w : context dom => solve_do enc dec tF a v w n) (fdist_context P).
+
 End WorldDist.
+
+Arguments fdist_do {G dom} enc dec tF {R} P a v n.
 
 (* --- Part 4 revisited: per-node NOISE laws for the drug trial --------- *)
 (* Z is a source node, so it takes its unobservable as its value and the  *)

@@ -161,52 +161,8 @@ Definition wf_operation (ag : aug_graph) (op : operation) : Prop :=
       node_in_graph n (dag ag) = true /\ label_of ag n <> Unmeasurable
   end.
 
-(* --- ordering discipline: no surgery after a measurement --------------- *)
-(* [Intervene] and [Randomize] rewrite the mechanism, so [Measure n] reads a
-   different value before and after them.  The ABSTRACT semantics cannot see
-   this: [abs_apply_op] leaves the graph alone on [Measure], and [abs_run]
-   ends at the post-surgery dag, so [measured] is interpreted against the
-   FINAL graph and carries no temporal information.  A program that measured
-   a node both before and after surgery would therefore have two concrete
-   values but only one abstract law.  Requiring measurements to come after
-   all surgery rules that out, and keeps the two layers in agreement.
-
-   This is SOUND but crude: measuring a node that no later surgery can
-   affect is harmless, so a descendant-based condition
-   ([no_descendant_of_b] below) would be strictly more permissive.  That
-   refinement is not needed while [Measure] is the only operation that
-   reads, and [simple_rct] satisfies the crude clause as written. *)
-Definition is_surgery (op : operation) : bool :=
-  match op with Intervene _ _ | Randomize _ => true | _ => false end.
-
-Definition is_measure (op : operation) : bool :=
-  match op with Measure _ => true | _ => false end.
-
-Fixpoint measures_last (prog : operations) : bool :=
-  match prog with
-  | [] => true
-  | op :: rest =>
-      if is_measure op
-      then forallb (fun o => negb (is_surgery o)) rest
-      else measures_last rest
-  end.
-
 Definition wf_operations (ag : aug_graph) (prog : operations) : Prop :=
-  Forall (wf_operation ag) prog /\ measures_last prog = true.
-
-(* randomize-then-measure is fine; measure-then-intervene is exactly the
-   ambiguity the clause exists to reject *)
-Example measures_last_rct : measures_last [Randomize 1; Measure 2] = true.
-Proof. reflexivity. Qed.
-
-Example measures_last_rejects_remeasure :
-  measures_last [Measure 2; Intervene 1 0; Measure 2] = false.
-Proof. reflexivity. Qed.
-
-(* measuring twice with no surgery between is fine *)
-Example measures_last_allows_remeasure :
-  measures_last [Measure 2; Measure 3] = true.
-Proof. reflexivity. Qed.
+  Forall (wf_operation ag) prog.
 
 (* ===================================================================== *)
 (* Graph- and function-surgery helpers                                   *)
