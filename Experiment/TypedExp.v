@@ -653,6 +653,120 @@ by rewrite mulrAC (divff Hpos) mul1r.
 Qed.
 
 (* ===================================================================== *)
+(* THE GENERAL PER-ARM FACTORISATION                                      *)
+(* --------------------------------------------------------------------- *)
+(* Everything above is general in the protocol.  This block is general in
+   the MODEL: any well-formed acyclic graph, any mechanisms, any exogenous
+   law, any two distinct nodes.  rct3's results become instances.
+
+   Three facts carry it, and all three are already proved:
+     [solve_randE]     randomizing a and solving = intervening at a's draw
+     [solve_do_off]    setting a makes the solve ignore a's own slot
+     [dmap_split_off]  so a's slot splits off the product law
+   What is left is to read the two logged columns off the runner. *)
+
+(* --- the two columns ---------------------------------------------------
+   A [Measure] step leaves the mechanism family alone and only appends to
+   the log, so both reads happen in the SAME randomized model.  The
+   engine's first-match lookup is why the a column cannot shadow the n
+   column. *)
+
+Lemma log_val_rand_fst (te : texperiment dom) (a n : Node G)
+    (w : context dom) :
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  log_val (elab_exp enc dec te) w a = solve_rand enc dec (te_mech te) a w a.
+Proof.
+move=> Hops; rewrite /log_val /elab_exp /elab_ops Hops /= Nat.eqb_refl /=.
+by rewrite /solve_rand.
+Qed.
+
+Lemma log_val_rand_snd (te : texperiment dom) (a n : Node G)
+    (w : context dom) :
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  log_val (elab_exp enc dec te) w n = solve_rand enc dec (te_mech te) a w n.
+Proof.
+move=> Hops.
+(* [n = a] is not an exception: the log then carries a's entry twice, and
+   first-match returns the first, whose value is the same one -- so the
+   claim collapses to the first column. *)
+have [Hna|Hna] := altP (n =P a).
+  rewrite Hna in Hops *; exact: (@log_val_rand_fst te a a w Hops).
+have Han : (ssval a =? ssval n) = false.
+  apply/Nat.eqb_neq => E.
+  by move/eqP: Hna; apply; exact: (esym (val_inj E)).
+rewrite /log_val /elab_exp /elab_ops Hops /= Han Nat.eqb_refl /=.
+by rewrite /solve_rand.
+Qed.
+
+(* the randomized column IS the coin: its law is a's own exogenous law,
+   whatever the mechanism it displaced said *)
+Lemma rand_full_fst_law (te : texperiment dom) (a n : Node G) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  fdist_log_val (elab_exp enc dec te) a = P a.
+Proof.
+move=> Hwf Hcyc Hops; rewrite /fdist_log_val.
+rewrite -(fdist_context_marginal P a); apply: dmap_eq => w.
+rewrite (@log_val_rand_fst te a n w Hops).
+exact: (solve_rand_self encK (te_mech te) a w Hwf Hcyc).
+Qed.
+
+(* THE THEOREM.  The pair the protocol logs is drawn by first drawing a's
+   slot from its own law and then drawing n's value from the
+   INTERVENTIONAL law at that value.  No positivity is needed: this is an
+   identity of laws, not an estimate. *)
+Theorem rand_full_joint (te : texperiment dom) (a n : Node G) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  fdist_log_pair (elab_exp enc dec te) a n
+  = dbind (P a) (fun x => dmap (fun y => (x, y))
+                   (fdist_do enc dec (te_mech te) P a x n)).
+Proof.
+move=> Hwf Hcyc Hops.
+have HF : forall (x : dom a) (w w' : context dom),
+    (forall m : Node G, m != a -> w m = w' m) ->
+    solve_do enc dec (te_mech te) a x w n
+    = solve_do enc dec (te_mech te) a x w' n.
+  by move=> x w w' Hoff; exact: (solve_do_off enc dec (te_mech te) x n Hoff).
+rewrite /fdist_log_pair.
+transitivity (dmap (fun w : context dom =>
+    (w a, solve_do enc dec (te_mech te) a (w a) w n)) (fdist_context P)).
+  apply: dmap_eq => w.
+  rewrite (@log_val_rand_fst te a n w Hops) (@log_val_rand_snd te a n w Hops).
+  rewrite (solve_rand_self encK (te_mech te) a w Hwf Hcyc).
+  by rewrite (solve_randE enc dec (te_mech te) a w n Hwf Hcyc).
+by rewrite (@dmap_split_off G dom R P a (dom n)
+              (fun x w => solve_do enc dec (te_mech te) a x w n) HF).
+Qed.
+
+(* ...and therefore, in any arm the coin actually fills, conditioning on
+   the recorded treatment gives the interventional law.  This is the
+   general form of identification by randomization. *)
+Corollary rand_full_cond (te : texperiment dom) (a n : Node G)
+    (x : dom a) (y : dom n) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  P a x != 0 ->
+  cPr (fdist_context P)
+      (@outcome_set (elab_exp enc dec te) n y)
+      (@outcome_set (elab_exp enc dec te) a x)
+  = fdist_do enc dec (te_mech te) P a x n y.
+Proof.
+move=> Hwf Hcyc Hops Hpos.
+apply: (@cPr_outcome_eq (elab_exp enc dec te) a n x y
+          (fun z => fdist_do enc dec (te_mech te) P a z n)).
+- by rewrite (@rand_full_fst_law te a n Hwf Hcyc Hops).
+- rewrite (@rand_full_joint te a n Hwf Hcyc Hops).
+  by rewrite (@rand_full_fst_law te a n Hwf Hcyc Hops).
+Qed.
+
+
+(* ===================================================================== *)
 (* CONCENTRATION FOR AN ARBITRARY EVENT ABOUT A UNIT                      *)
 (* --------------------------------------------------------------------- *)
 (* [measure_lln_any] below is indexed by a node and a value, but its      *)
@@ -861,6 +975,177 @@ move: Hx; rewrite ltr_pdivrMr // => Hlt.
 rewrite ler_pdivrMr; last by rewrite mulr_gt0 // exprn_gt0.
 by rewrite mulrCA; exact: ltW.
 Qed.
+
+(* ===================================================================== *)
+(* UNIFORM OVER A FAMILY: THE REPORTED DISTRIBUTION                      *)
+(* --------------------------------------------------------------------- *)
+(* Everything above is per VALUE.  The [N0] of [emp_cond_converges]       *)
+(* depends on which value is asked about, so the per-value statements do  *)
+(* not add up to "the reported conditional DISTRIBUTION is close to the   *)
+(* target" -- that needs one sample size good for every value at once.    *)
+(*                                                                       *)
+(* Boole's inequality closes the gap, and cheaply, for a reason worth     *)
+(* naming: the [del] that [emp_cond_bound] runs on is                     *)
+(* [min (Pr B / 2) (eps * Pr B / 8)], which depends only on the           *)
+(* CONDITIONING event and [eps] -- not on which member of the family is   *)
+(* being estimated.  So one [del] and one [N0] serve the whole family,    *)
+(* and the only price is that the variances add.                         *)
+(*                                                                       *)
+(* The target is a parameter here rather than [cPr] itself, with the      *)
+(* identification supplied as a hypothesis.  That is the same shape       *)
+(* [cPr_outcome_eq] takes, and it is what lets a caller state the         *)
+(* conclusion about an INTERVENTIONAL law: the estimator converges to     *)
+(* whatever the conditional has been proved equal to.                     *)
+(* ===================================================================== *)
+
+(* the event that the family member [A] is misreported by [eps], against
+   a target [theta] the caller names *)
+Definition cond_off (A B : {set context dom}) (N : nat) (theta eps : R)
+  : {set sample N.+1} :=
+  [set s | eps <= `|@emp_cond A B N s - theta|].
+
+(* [pr_geq] of the deviation IS the mass of that set; the two differ only
+   by the RV combinators, which do not reduce under unification *)
+Lemma pr_cond_off (A B : {set context dom}) (N : nat) (theta eps : R) :
+  `Pr[ (normr `o ((@emp_cond A B N) `-cst theta)) >= eps ]
+  = Pr (fdist_sample N.+1) (@cond_off A B N theta eps).
+Proof.
+rewrite /pr_geq /cond_off /Pr; apply: eq_bigl => s.
+by rewrite !inE /comp_RV trans_sub_RV_appE.
+Qed.
+
+(* CHEBYSHEV FOR THE WHOLE FAMILY.  One [del], so one bound; the sum is
+   over the family and the conditioning variance is paid once per member. *)
+Theorem emp_cond_bound_fam (I : finType) (Af : I -> {set context dom})
+    (B : {set context dom}) (N : nat) (eps del : R) :
+  0 < del -> 2 * del <= Pr (fdist_context P) B ->
+  4 * del / Pr (fdist_context P) B < eps ->
+  Pr (fdist_sample N.+1)
+     (\bigcup_(i : I) @cond_off (Af i) B N (cPr (fdist_context P) (Af i) B) eps)
+  <= (\sum_(i : I) (`V (Ind (Af i :&: B) : {RV (fdist_context P) -> R^o})
+                    + `V (Ind B : {RV (fdist_context P) -> R^o})))
+     / (N.+1%:R * del ^+ 2).
+Proof.
+move=> Hdel Hdb Heps.
+apply: (le_trans (Pr_bigcup _ _ _)).
+rewrite mulr_suml; apply: ler_sum => i _.
+rewrite mulrDl -pr_cond_off.
+exact: (@emp_cond_bound (Af i) B N eps del Hdel Hdb Heps).
+Qed.
+
+(* ...and the eps-delta form: with confidence [1 - delta], EVERY member of
+   the family is reported within [eps] of its target, from one sample
+   size on.  This is the statement that says a reported conditional
+   DISTRIBUTION is close, rather than one of its values. *)
+Corollary emp_cond_converges_fam (I : finType) (Af : I -> {set context dom})
+    (B : {set context dom}) (th : I -> R) (eps delta : R) :
+  0 < eps -> 0 < delta -> 0 < Pr (fdist_context P) B ->
+  (forall i : I, th i = cPr (fdist_context P) (Af i) B) ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    Pr (fdist_sample N.+1)
+       (\bigcup_(i : I) @cond_off (Af i) B N (th i) eps) <= delta.
+Proof.
+move=> Heps Hdelta Hb Hth.
+have Hset : forall M : nat,
+    \bigcup_(i : I) @cond_off (Af i) B M (th i) eps
+    = \bigcup_(i : I) @cond_off (Af i) B M
+        (cPr (fdist_context P) (Af i) B) eps.
+  by move=> M; apply: eq_bigr => i _; rewrite Hth.
+set b := Pr (fdist_context P) B.
+set del := Order.min (b / 2) (eps * b / 8).
+have H2 : (0 : R) < 2 by rewrite ltr0n.
+have H8 : (0 : R) < 8 by rewrite ltr0n.
+have Hdel : 0 < del.
+  rewrite lt_min; apply/andP; split; first exact: (divr_gt0 Hb H2).
+  exact: (divr_gt0 (mulr_gt0 Heps Hb) H8).
+have Hdb : 2 * del <= b.
+  rewrite mulrC -ler_pdivlMr //; by rewrite ge_min lexx.
+have Hq : 4 * del / b < eps.
+  apply: le_lt_trans (_ : 4 * (eps * b / 8) / b < eps).
+    apply: ler_wpM2r; first by rewrite invr_ge0 ltW.
+    apply: ler_wpM2l; first by rewrite ler0n.
+    by rewrite ge_min lexx orbT.
+  have Hb0 : b != 0 by rewrite gt_eqF.
+  rewrite quarter_of_eighth mulrAC (mulfK Hb0).
+  by rewrite ltr_pdivrMr // ltr_pMr // ltr1n.
+set C := \sum_(i : I) (`V (Ind (Af i :&: B) : {RV (fdist_context P) -> R^o})
+                       + `V (Ind B : {RV (fdist_context P) -> R^o})).
+have Hpos : 0 < delta * del ^+ 2 by rewrite mulr_gt0 // exprn_gt0.
+exists (truncn (C / (delta * del ^+ 2))) => N HN.
+rewrite Hset.
+apply: (le_trans (@emp_cond_bound_fam I Af B N eps del Hdel Hdb Hq)).
+rewrite -/C.
+have Hx : C / (delta * del ^+ 2) < N.+1%:R.
+  apply: (lt_le_trans (truncnS_gt _)).
+  by rewrite ler_nat ltnS.
+move: Hx; rewrite ltr_pdivrMr // => Hlt.
+rewrite ler_pdivrMr; last by rewrite mulr_gt0 // exprn_gt0.
+by rewrite mulrCA; exact: ltW.
+Qed.
+
+(* ===================================================================== *)
+(* THE GENERAL CHAIN, END TO END                                          *)
+(* --------------------------------------------------------------------- *)
+(* [rand_full_cond] identifies the per-arm conditional with the
+   interventional law for EVERY well-formed acyclic model; the two
+   concentration results above are already general in the events.  So the
+   composition needs no new probability: what a trial reports in an arm
+   converges to P(n = y | do(a := x)), in any model.
+
+   Note what replaces rct3's declared-size bookkeeping: there [e3] had to
+   be pinned at size 1 so the events stayed fixed while N was quantified,
+   because the protocol [te_rct3_full N] mentioned N.  Here [te] is a
+   parameter, so its elaboration is one fixed term and the question does
+   not arise. *)
+
+Theorem rand_full_emp_cond_converges (te : texperiment dom) (a n : Node G)
+    (x : dom a) (y : dom n) (eps delta : R) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  0 < eps -> 0 < delta -> 0 < P a x ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    `Pr[ (normr `o ((@emp_cond
+              (@outcome_set (elab_exp enc dec te) n y)
+              (@outcome_set (elab_exp enc dec te) a x) N)
+           `-cst (fdist_do enc dec (te_mech te) P a x n y))) >= eps ]
+    <= delta.
+Proof.
+move=> Hwf Hcyc Hops Heps Hdelta Hx.
+have HB : Pr (fdist_context P) (@outcome_set (elab_exp enc dec te) a x) = P a x.
+  by rewrite Pr_outcome (@rand_full_fst_law te a n Hwf Hcyc Hops).
+rewrite -(@rand_full_cond te a n x y Hwf Hcyc Hops (lt0r_neq0 Hx)).
+apply: emp_cond_converges => //.
+by rewrite HB.
+Qed.
+
+(* ...and uniformly over the outcome values: with confidence [1 - delta],
+   the whole reported table for arm x is within [eps] of the
+   interventional law.  This is the general form of the statement rct3
+   gets in [rct3_full_emp_cond_converges_all]. *)
+Theorem rand_full_emp_cond_converges_all (te : texperiment dom) (a n : Node G)
+    (x : dom a) (eps delta : R) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  0 < eps -> 0 < delta -> 0 < P a x ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    Pr (fdist_sample N.+1)
+       (\bigcup_(y : dom n)
+          @cond_off (@outcome_set (elab_exp enc dec te) n y)
+                    (@outcome_set (elab_exp enc dec te) a x)
+                    N (fdist_do enc dec (te_mech te) P a x n y) eps)
+    <= delta.
+Proof.
+move=> Hwf Hcyc Hops Heps Hdelta Hx.
+have HB : Pr (fdist_context P) (@outcome_set (elab_exp enc dec te) a x) = P a x.
+  by rewrite Pr_outcome (@rand_full_fst_law te a n Hwf Hcyc Hops).
+apply: emp_cond_converges_fam => //.
+  by rewrite HB.
+move=> y.
+exact: (esym (@rand_full_cond te a n x y Hwf Hcyc Hops (lt0r_neq0 Hx))).
+Qed.
+
 
 (* ===================================================================== *)
 (* The dataset: every measured node's column at once                     *)

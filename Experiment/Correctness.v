@@ -444,3 +444,145 @@ Proof.
     intros l Hpath _.
     exact (isolated_no_TR_path T R (dag G) l Hpath).
 Qed.
+
+(* =====================================================================
+   The exogenous assignment matters only pointwise
+   ---------------------------------------------------------------------
+   [randomize_semantic_do] writes the drawn value at the HEAD of the
+   exogenous list, as [(n, v) :: U].  The typed layer hands the engine
+   [to_assign w] instead, which already maps n -- to the same value, since
+   that is where the draw came from.  So the two differ as LISTS while
+   agreeing as LOOKUPS, and bridging them needs only that [find_value]
+   cannot tell the difference.
+
+   It cannot, and unconditionally: [get_value_of_node] reads U in exactly
+   one place, [get_assigned_value U u], and the recursion over the
+   topological order passes U along untouched.  No well-formedness,
+   acyclicity or completeness hypothesis is involved.
+   ===================================================================== *)
+
+Lemma get_values_from_topo_sort_U_ext {X: Type} :
+  forall (ts : nodes) (G : graph) (g : graphfun) (U U' A A_eval : assignments X),
+  (forall k : node, get_assigned_value U k = get_assigned_value U' k) ->
+  get_values_from_topo_sort ts G g U A A_eval
+  = get_values_from_topo_sort ts G g U' A A_eval.
+Proof.
+  intros ts G g U U' A A_eval HU. revert A_eval.
+  induction ts as [| u ts' IH]; intros A_eval.
+  - reflexivity.
+  - simpl.
+    assert (Hv: get_value_of_node u G g U A A_eval
+                = get_value_of_node u G g U' A A_eval).
+    { unfold get_value_of_node. rewrite HU. reflexivity. }
+    rewrite Hv.
+    destruct (get_value_of_node u G g U' A A_eval) as [x|] eqn:Hx.
+    + apply IH.
+    + reflexivity.
+Qed.
+
+Lemma get_values_U_ext {X: Type} :
+  forall (G : graph) (g : graphfun) (U U' A : assignments X),
+  (forall k : node, get_assigned_value U k = get_assigned_value U' k) ->
+  get_values G g U A = get_values G g U' A.
+Proof.
+  intros G g U U' A HU. unfold get_values.
+  destruct (topological_sort G) as [ts|] eqn:Hts.
+  - apply get_values_from_topo_sort_U_ext. exact HU.
+  - reflexivity.
+Qed.
+
+Theorem find_value_U_ext {X: Type} :
+  forall (G : graph) (g : graphfun) (u : node) (U U' A : assignments X),
+  (forall k : node, get_assigned_value U k = get_assigned_value U' k) ->
+  find_value G g u U A = find_value G g u U' A.
+Proof.
+  intros G g u U U' A HU. unfold find_value.
+  rewrite (get_values_U_ext G g U U' A HU). reflexivity.
+Qed.
+
+(* The case the bridge needs: prepending an entry the list already carries
+   is invisible, because [get_assigned_value] takes the FIRST match. *)
+Corollary find_value_cons_redundant {X: Type} :
+  forall (G : graph) (g : graphfun) (u k : node) (v : X) (U A : assignments X),
+  get_assigned_value U k = Some v ->
+  find_value G g u ((k, v) :: U) A = find_value G g u U A.
+Proof.
+  intros G g u k v U A Hk. apply find_value_U_ext.
+  intros j. simpl. destruct (k =? j) eqn:Hkj.
+  - apply Nat.eqb_eq in Hkj. subst j. symmetry. exact Hk.
+  - reflexivity.
+Qed.
+
+(* ---------------------------------------------------------------------
+   ...and a node whose mechanism ignores its noise does not read it
+
+   [find_value_U_ext] is too blunt for the do-surgered model: the engine
+   DOES look up the intervened node's slot -- [get_value_of_node] consults
+   [get_assigned_value U u] before calling the mechanism -- so two
+   assignments differing there are not interchangeable in general.  What
+   saves the surgered case is that the constant mechanism discards the
+   value it is handed.  So the slot is read for its Some/None status only,
+   and any two assignments that both supply it agree.
+   --------------------------------------------------------------------- *)
+
+Lemma get_values_from_topo_sort_U_ext_ignore {X: Type} :
+  forall (ts : nodes) (G : graph) (g : graphfun) (b : node) (xb yb : X)
+         (U U' A A_eval : assignments X),
+  (forall k : node, k <> b -> get_assigned_value U k = get_assigned_value U' k) ->
+  get_assigned_value U b = Some xb ->
+  get_assigned_value U' b = Some yb ->
+  (forall (r1 r2 : X) (p : list X), g b (r1, p) = g b (r2, p)) ->
+  get_values_from_topo_sort ts G g U A A_eval
+  = get_values_from_topo_sort ts G g U' A A_eval.
+Proof.
+  intros ts G g b xb yb U U' A A_eval Hoff Hb Hb' Hign. revert A_eval.
+  induction ts as [| u ts' IH]; intros A_eval.
+  - reflexivity.
+  - simpl.
+    assert (Hv: get_value_of_node u G g U A A_eval
+                = get_value_of_node u G g U' A A_eval).
+    { unfold get_value_of_node.
+      destruct (get_assigned_value A u) as [z|] eqn:HA; [reflexivity|].
+      destruct (Nat.eq_dec u b) as [Hub | Hub].
+      - subst u. rewrite Hb. rewrite Hb'.
+        destruct (get_parent_assignments A_eval (find_parents b G)) as [p|] eqn:Hp.
+        + rewrite (Hign xb yb p). reflexivity.
+        + reflexivity.
+      - rewrite (Hoff u Hub). reflexivity. }
+    rewrite Hv.
+    destruct (get_value_of_node u G g U' A A_eval) as [x|] eqn:Hx.
+    + apply IH.
+    + reflexivity.
+Qed.
+
+Theorem find_value_U_ext_ignore {X: Type} :
+  forall (G : graph) (g : graphfun) (u b : node) (xb yb : X)
+         (U U' A : assignments X),
+  (forall k : node, k <> b -> get_assigned_value U k = get_assigned_value U' k) ->
+  get_assigned_value U b = Some xb ->
+  get_assigned_value U' b = Some yb ->
+  (forall (r1 r2 : X) (p : list X), g b (r1, p) = g b (r2, p)) ->
+  find_value G g u U A = find_value G g u U' A.
+Proof.
+  intros G g u b xb yb U U' A Hoff Hb Hb' Hign.
+  unfold find_value, get_values.
+  destruct (topological_sort G) as [ts|] eqn:Hts; [| reflexivity].
+  rewrite (get_values_from_topo_sort_U_ext_ignore ts G g b xb yb U U' A nil
+             Hoff Hb Hb' Hign).
+  reflexivity.
+Qed.
+
+(* [do_value_at_n] with the graph left abstract, phrased through
+   [semantic_do] so the typed layer can use it directly: the intervened
+   node takes the value it was set to. *)
+Corollary semantic_do_self : forall (G : graph) (g : @graphfun nat) (n : node)
+    (v : nat) (U : assignments nat),
+  G_well_formed G = true ->
+  contains_cycle G = false ->
+  node_in_graph n G = true ->
+  is_assignment_for U (nodes_in_graph G) = true ->
+  semantic_do n v G g n U = Some v.
+Proof.
+  intros [V E] g n v U Hwf Hcyc Hn HU. unfold semantic_do.
+  simpl in Hn, HU. apply do_value_at_n; assumption.
+Qed.

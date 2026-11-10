@@ -798,4 +798,72 @@ apply: emp_cond_converges => //.
 by rewrite HB.
 Qed.
 
+
+(* --- the whole reported distribution, not one of its values ----------- *)
+(* [rct3_full_emp_cond_converges] fixes an outcome value before choosing   *)
+(* the sample size, so it does not say the trial's REPORTED TABLE for arm  *)
+(* x is close to the interventional law -- only that any one entry of it   *)
+(* is.  This closes that: one sample size beyond which, with confidence    *)
+(* [1 - delta], EVERY outcome value's reported frequency in arm x is       *)
+(* within [eps] of P(Y = y | do(X := x)).                                  *)
+(*                                                                        *)
+(* The target handed to [emp_cond_converges_fam] is the interventional     *)
+(* law, with [rct3_full_cond] discharging the identification hypothesis    *)
+(* value by value.  Overlap is still the only assumption on [P].           *)
+Theorem rct3_full_emp_cond_converges_all (x : dom_3 x3) (eps delta : R) :
+  0 < eps -> 0 < delta -> 0 < P x3 x ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    Pr (fdist_sample P N.+1)
+       (\bigcup_(y : dom_3 y3)
+          @cond_off G3 dom_3 R P
+            (@outcome_set G3 dom_3 enc_3 dec_3 e3 y3 y)
+            (@outcome_set G3 dom_3 enc_3 dec_3 e3 x3 x)
+            N (fdist_do enc_3 dec_3 tF_3 P x3 x y3 y) eps)
+    <= delta.
+Proof.
+move=> Heps Hdelta Hx.
+have HB : Pr (fdist_context P) (@outcome_set G3 dom_3 enc_3 dec_3 e3 x3 x)
+          = P x3 x.
+  by rewrite Pr_outcome /e3 rct3_full_X_law.
+apply: emp_cond_converges_fam => //.
+  by rewrite HB.
+move=> y; exact: (esym (rct3_full_cond 1 y (lt0r_neq0 Hx))).
+Qed.
+(* --- the generalisation, checked against this instance ---------------- *)
+(* [rct3_full_joint] above was proved by computing both sides on G_3.
+   [TypedExp.rand_full_joint] proves the same shape for EVERY well-formed
+   acyclic model, so this file's result is now an instance -- and the
+   instance is checked here, which is what makes the general statement
+   believable rather than merely plausible. *)
+Example rct3_full_joint_is_general (N : nat) :
+  fdist_log_pair enc_3 dec_3 P (elab_exp enc_3 dec_3 (te_rct3_full N)) x3 y3
+  = dbind (P x3) (fun x => dmap (fun y => (x, y))
+                   (fdist_do enc_3 dec_3 tF_3 P x3 x y3)).
+Proof.
+apply: (@rand_full_joint G3 dom_3 enc_3 dec_3 enc_3K R P
+          (te_rct3_full N) x3 y3).
+- exact: G3_wf.
+- exact: G3_acyc.
+- by [].
+Qed.
+
+(* the empirical chain generalises too: [rct3_full_emp_cond_converges] is
+   [rand_full_emp_cond_converges] at [te_rct3_full 1], whose elaboration
+   IS [e3]. *)
+Example rct3_full_emp_is_general (x : dom_3 x3) (y : dom_3 y3)
+    (eps delta : R) :
+  0 < eps -> 0 < delta -> 0 < P x3 x ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    `Pr[ (normr `o
+          ((@emp_cond G3 dom_3 R P
+              (@outcome_set G3 dom_3 enc_3 dec_3 e3 y3 y)
+              (@outcome_set G3 dom_3 enc_3 dec_3 e3 x3 x) N)
+           `-cst (fdist_do enc_3 dec_3 tF_3 P x3 x y3 y))) >= eps ]
+    <= delta.
+Proof.
+move=> Heps Hdelta Hx.
+apply: (@rand_full_emp_cond_converges G3 dom_3 enc_3 dec_3 enc_3K R P
+          (te_rct3_full 1) x3 y3 x y eps delta) => //.
+Qed.
+
 End Rct3FullLaw.

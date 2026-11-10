@@ -46,11 +46,21 @@
 \providecommand{\llbracket}{[\![}
 \providecommand{\rrbracket}{]\!]}
 
+% --- deferred proofs: statements in the body, proofs in Appendix A ---
+\newcommand{\pfref}[1]{%
+  \par\smallskip\noindent
+  \hyperref[pf:#1]{\small$\triangleright$\ proof, p.\,\pageref{pf:#1}}\par\smallskip}
+\newenvironment{proofof}[3]{%
+  \par\medskip\phantomsection\label{pf:#1}%
+  \noindent\textbf{#2~\ref{#1}}\ \emph{#3}\quad
+  \hyperref[#1]{\small[statement, p.\,\pageref{#1}]}\par\nobreak
+  \noindent\ignorespaces}{\par}
+
 \title{\textbf{Experiments as Programs over Causal Models}\\[2mm]
 \large A formalised denotational and operational semantics, with
 static design-checking as an application}
 \author{}
-\date{20 October 2026 --- state of the Rocq development}
+\date{8 November 2026 --- state of the Rocq development}
 
 \begin{document}
 \maketitle
@@ -215,16 +225,11 @@ Nodes outside $G$ keep the engine's default behaviour.
 \end{definition}
 
 \begin{lemma}[Elaboration is compatible]
+\label{lem:elabcompat}
 $\elab(F)$ reads only the parents $G$ declares.
 \end{lemma}
 
-\begin{proof}
-Every read a mechanism can perform is at a declared parent, whose index
-into $\pa(n)$ is therefore in range; the engine's positional agreement
-hypothesis covers exactly the in-range positions. The ticket discipline of
-$\pv_n$ is what makes this hold by construction rather than by inspection
-of $F$.
-\end{proof}
+\pfref{lem:elabcompat}
 
 \begin{definition}[Solve]
 Writing $\lceil w \rceil$ for the $\mathbb N$-coded form of a context $w$,
@@ -265,21 +270,7 @@ is not a defect, it is selection bias.
 $\push{(\lambda w.\,w_n)} P_\Ctx = P_n$.
 \end{lemma}
 
-\begin{proof}
-Write the indicator $[w_n = v]$ as an extra factor of the product, so that
-the mass at $v$ becomes a single sum over contexts of a product over nodes.
-Exchange the sum and the product using a \emph{dependent} distributivity
-law
-\[
-  \prod_{i} \sum_{j\,:\,J_i} f(i,j)
-  \;=\;
-  \sum_{g \,\in\, \prod_i J_i} \prod_i f(i, g(i)),
-\]
-which is proved by transporting the dependent function space into the
-tagged sum $\{i\,\&\,J_i\}$, where the standard non-dependent
-distributivity applies. Then every factor except the one at $n$ sums to
-$1$, and the factor at $n$ retains the indicator.
-\end{proof}
+\pfref{lem:ctxmarg}
 
 \begin{remark}
 \texttt{infotheo} ships only the \emph{homogeneous} product ($N$ copies of
@@ -296,14 +287,7 @@ For $x \neq y$,
 $\;\push{(\lambda w.\,(w_x, w_y))} P_\Ctx \;=\; P_x \otimes P_y$.
 \end{lemma}
 
-\begin{proof}
-As for Lemma~\ref{lem:ctxmarg}, but with \emph{two} indicators inserted as
-extra factors, one at $x$ and one at $y$. Exchanging sum and product by the
-same dependent distributivity law isolates the factors at $x$ and $y$, each
-of which retains its indicator and evaluates to $P_x(v_1)$ resp.\
-$P_y(v_2)$, while every other factor sums to $1$. Distinctness of $x$ and
-$y$ is what keeps the two isolated factors from colliding.
-\end{proof}
+\pfref{lem:pairmarg}
 
 \begin{lemma}[A product pushforward is a mixture]
 \label{lem:uncurry}
@@ -317,12 +301,7 @@ i.e.\ pushing a two-argument function through a product law is the same as
 drawing the first argument and then pushing the second.
 \end{lemma}
 
-\begin{proof}
-Evaluate both sides at $c$. The left side is a sum over pairs
-$(a,b)$ with $F(a,b) = c$ of $\mu(a)\nu(b)$; re-indexing the sum over
-$A \times B$ as an iterated sum over $A$ and then $B$, and pulling the
-factor $\mu(a)$ out of the inner sum, gives the right side.
-\end{proof}
+\pfref{lem:uncurry}
 
 This is the monadic shape of independence, and it is what turns a
 pushforward along a function of two nodes into a mixture over one of them
@@ -351,15 +330,11 @@ is the abstract program's \emph{per-node output}, and it is what a causal
 query ranges over.
 
 \begin{lemma}[Two routes to the node law]
+\label{lem:tworoutes}
 $\push{(\lambda v.\, v_n)}\,\mathsf{fdist\_world} = \mathsf{fdist\_node}(n)$.
 \end{lemma}
 
-\begin{proof}
-Both sides are pushforwards of $P_\Ctx$; compose the two maps on the left
-and observe the composite is pointwise equal to
-$\lambda w.\,\solve_F(w)(n)$, then use that pushforward respects pointwise
-equality of maps.
-\end{proof}
+\pfref{lem:tworoutes}
 
 Contrast Lemma~\ref{lem:ctxmarg}: that one recovers a node's \emph{noise}
 law and holds by construction, whereas this one has to run the mechanisms.
@@ -383,6 +358,28 @@ absent: it is conditioning rather than surgery, it acts on the population
 rather than on a unit, and it breaks the product form of the exogenous
 law.
 \end{definition}
+
+\begin{remark}[Two surgeries, and why they stay separate]
+\label{rem:twosurgeries}
+Intervening and randomizing cut the same edges but differ in what they put
+back in place of the mechanism at $n$. $\mathsf{Intervene}(n,v)$ installs
+the constant $v$, discarding both the parents and the node's own noise
+term; $\mathsf{Randomize}(n)$ installs the noise read, discarding the
+parents and returning $w_n$. Neither is defined in terms of the other, and
+that is deliberate: it is what makes their agreement
+Theorem~\ref{thm:randdo} --- a statement with content, proved by
+topological induction --- rather than a definition. Defining
+$\mathsf{Randomize}(n)$ as ``draw $v$, then $\mathsf{Intervene}(n,v)$''
+would also couple the operation layer to the probability layer, since an
+operation could then not be stated without a distribution to draw from; as
+it stands the operations are value-level syntax and the per-unit theorems
+need no probability at all.
+
+Note also that neither operation touches the \emph{graph}: only the
+mechanism family is edited. Graph surgery appears in exactly one place,
+the denotation $\solvedo$ of \S\ref{sec:do3}, which is a second way of
+reading the same model rather than something a protocol performs.
+\end{remark}
 
 \begin{definition}[Experiment]
 An experiment is a record $\langle \text{labels}, F, \text{ops}, N \rangle$:
@@ -508,11 +505,7 @@ For $f : A \to B$ and $s \in A^{N+1}$, \;
 $\emp{\langle f(s_i)\rangle_i} = \push{f}\,\emp{s}$.
 \end{lemma}
 
-\begin{proof}
-Both sides are pushforwards of the uniform law on indices;
-$\lambda i.\,f(s_i)$ is the composite of $f$ with $\lambda i.\,s_i$, so
-functoriality of the pushforward gives the claim.
-\end{proof}
+\pfref{lem:empmap}
 
 This is the lemma that makes a concrete run comparable with an abstract
 pushforward: tabulating a sample and then pushing it through $f$ is the
@@ -524,11 +517,7 @@ For $s \in A^{N+1}$ and $v \in A$ there is $k \le N+1$ with
 $\emp{s}(v) = k/(N+1)$.
 \end{lemma}
 
-\begin{proof}
-Take $k = \#\{i : s_i = v\}$ and apply the counting form above; $k \le N+1$
-because a subset of the index type has at most as many elements as the
-index type.
-\end{proof}
+\pfref{lem:grid}
 
 Lemma~\ref{lem:grid} is the reason an \emph{exact} agreement theorem can
 only ever be a warm-up; see the discussion after
@@ -594,22 +583,7 @@ $g : \dom_n \to \dom_n$ and all $u,\pi$. Then for every context $w$,
 \]
 \end{theorem}
 
-\begin{proof}
-By the engine's existence theorem, under well-formedness, acyclicity and a
-complete exogenous assignment, $\fv$ computes $n$'s value from its own
-slot and its parents' values. At $n$ the parent list is empty, and reading
-$n$'s slot out of the coded context returns exactly $\enc_n(w_n)$ (the
-read-after-write property of the coding bridge, which holds because node
-identifiers are distinct). Unfolding $\elab$ at $n$ gives
-\[
-  \enc_n\bigl(F_n(\dect_n(\enc_n(w_n)),\,\cdot\,)\bigr)
-  = \enc_n\bigl(F_n(w_n, \cdot)\bigr)
-  = \enc_n(g(w_n)),
-\]
-using $\dect_n \circ \enc_n = \id$ and then the hypothesis on $F_n$.
-Finally $\solve$ applies $\dect_n$ to this, and $\dect_n\circ\enc_n = \id$
-again.
-\end{proof}
+\pfref{thm:solvesource}
 
 \begin{remark}
 This is the first proved instance of elaboration correctness --- the first
@@ -636,29 +610,14 @@ $e$ whose protocol is exactly $[\mathsf{Measure}(n)]$,
 \]
 \end{theorem}
 
-\begin{proof}
-Because the protocol consists of the single operation
-$\mathsf{Measure}(n)$, the log has one entry, keyed by $n$, and reading it
-back gives $\solve_F(w)(n)$; hence
-$\logv(e,w,n) = \solve_F(w)(n) = g(w_n)$ by
-Theorem~\ref{thm:solvesource}. So
-\[
-  \mathsf{fdist\_log}(e,n)
-  = \push{(\lambda w.\,g(w_n))} P_\Ctx
-  = \push{g}\,\push{(\lambda w.\,w_n)} P_\Ctx
-  = \push{g}\, P_n,
-\]
-by functoriality of the pushforward and then Lemma~\ref{lem:ctxmarg}.
-\end{proof}
+\pfref{thm:law}
 
 \begin{corollary}[``Hello world'': a pure echo logs the noise law]
+\label{cor:helloworld}
 If $F_n(u,\pi) = u$ then $\mathsf{fdist\_log}(e,n) = P_n$.
 \end{corollary}
 
-\begin{proof}
-The case $g = \id$ of Theorem~\ref{thm:law}, with
-$\push{\id}\mu = \mu$.
-\end{proof}
+\pfref{cor:helloworld}
 
 Theorem~\ref{thm:law} is the end-to-end smoke test of the entire stack ---
 coding, the context bridge, the engine's solver, the total evaluator, the
@@ -680,17 +639,7 @@ $\emp{s} = P_\Ctx$,
 \]
 \end{theorem}
 
-\begin{proof}
-The column is $\langle \logv(e,s_i,n)\rangle_i$, so by
-Lemma~\ref{lem:empmap}
-\[
-  \emp{\mathsf{col}(e,n,s)}
-  = \push{(\lambda w.\,\logv(e,w,n))}\,\emp{s}
-  = \push{(\lambda w.\,\logv(e,w,n))}\,P_\Ctx,
-\]
-using representativeness, and the right-hand side is
-$\mathsf{fdist\_log}(e,n) = \push{g}P_n$ by Theorem~\ref{thm:law}.
-\end{proof}
+\pfref{thm:exact}
 
 This is the honest form of ``exhaustive'': the sample is assumed to carry
 the right law, and the assumption is \emph{stated} rather than assumed
@@ -725,12 +674,7 @@ Under the hypotheses of Theorem~\ref{thm:law},
 $\;\Ex_{P_\Ctx}\bigl[\Ind{A_v}\bigr] = (\push{g}P_n)(v)$.
 \end{lemma}
 
-\begin{proof}
-The mean of an indicator is the probability of its event, and
-$P_\Ctx(A_v)$ is by definition the mass that
-$\push{(\lambda w.\,\logv(e,w,n))}P_\Ctx = \mathsf{fdist\_log}(e,n)$
-assigns to $v$; apply Theorem~\ref{thm:law}.
-\end{proof}
+\pfref{lem:eind}
 
 \begin{lemma}[The empirical frequency is the averaged indicator]
 \label{lem:bridge}
@@ -742,12 +686,7 @@ For $f : A \to B$, $v \in B$ and $s \in A^{N+1}$,
 \]
 \end{lemma}
 
-\begin{proof}
-Both sides count the indices at which $f(s_i) = v$ and divide by $N+1$: the
-left by the counting form of $\emp{\cdot}$, the right by splitting the sum
-on the predicate $f(s_i) = v$, where the complementary part contributes
-zero.
-\end{proof}
+\pfref{lem:bridge}
 
 Lemma~\ref{lem:bridge} is the bridge that makes a statement about the
 program's output a statement the weak law can act on, with no new
@@ -768,52 +707,19 @@ sample size $N+1$ and $\varepsilon > 0$, then
 \]
 \end{theorem}
 
-\begin{proof}
-By Lemma~\ref{lem:bridge} the quantity inside the probability is the
-average of $N+1$ independent copies of $\Ind{A_v}$, minus its mean --- the
-mean being $(\push{g}P_n)(v)$ by Lemma~\ref{lem:eind}. Chebyshev's
-inequality applied to that average, whose variance is
-$\Var[\Ind{A_v}]/(N+1)$, gives the bound. Formally this instantiates the
-library's weak law, whose hypotheses are that the summands are i.i.d.\
-copies with common mean and common variance; the sum-decomposition
-obligation is discharged by a generic ``sum of $n$ i.i.d.\ copies of an
-arbitrary random variable'' construction, which the library did not
-provide (it instantiates the relation only for one specific variable in its
-asymptotic-equipartition development).
-\end{proof}
+\pfref{thm:lln}
 
-Three things are worth emphasising about the shape of
-Theorem~\ref{thm:lln}.
+Three features of its shape matter. It is a finite-$N$ bound rather than a
+limit, which is what makes it provable here at all: distributions are
+finitely supported, so the infinite product space almost-sure convergence
+needs is not expressible, and a $1/N$ bound gives convergence in
+probability without mentioning a limit. It carries no representativeness
+premise, so unlike Theorem~\ref{thm:exact} it is non-vacuous for arbitrary
+real-valued $P$ (cf.\ Remark~\ref{rem:warmup}). And the bound quotes the
+size recorded in the experiment, so the hypothesis tying that to $N+1$ is
+load-bearing --- without it the statement would quote a size unrelated to
+the sample at hand.
 
-\begin{itemize}
-\item \textbf{It is a finite-$N$ bound, not a limit.} This is what makes it
-      provable in this setting at all: distributions here are
-      finitely-supported, so the infinite product space that almost-sure
-      convergence requires is not expressible. A $1/N$ bound delivers
-      convergence in probability without ever mentioning a limit.
-\item \textbf{It carries no representativeness premise}, so unlike
-      Theorem~\ref{thm:exact} it is non-vacuous for arbitrary real-valued
-      $P$ (cf.\ Remark~\ref{rem:warmup}). The grid of
-      Lemma~\ref{lem:grid} has spacing $1/(N+1) \to 0$ while $\varepsilon$
-      stays positive, so there is always room; convergence never requires
-      hitting the limit.
-\item \textbf{The declared sample size sets the rate.} The bound quotes the
-      size recorded in the experiment, so the hypothesis tying it to $N+1$
-      is load-bearing: without it the statement would quote a size with no
-      relation to the sample at hand.
-\end{itemize}
-
-
-\begin{remark}[The hypotheses are about the target, not the probability]
-\label{rem:hypsremovable}
-The five structural hypotheses inherited from Theorem~\ref{thm:law} are
-used in exactly one place: Lemma~\ref{lem:eind}, to rewrite the
-indicator's mean as $(\push{g}P_n)(v)$. Nothing in the Chebyshev argument
-touches them. Naming the target by the abstract semantics instead removes
-all five and generalises the statement to an arbitrary protocol at an
-arbitrary node; see Lemma~\ref{lem:eindany} and
-Theorem~\ref{thm:llnany}.
-\end{remark}
 
 \subsection{The checker, and its soundness}
 
@@ -860,22 +766,16 @@ separation; the conditioning set is deduplicated internally so that
 duplicate-freeness need not be assumed.
 
 \begin{theorem}[A randomized trial is syntactically correct]
+\label{thm:rctsyncorrect}
 For the protocol ``randomize $T$, then measure $R$'', the post-experiment
 DAG is $\mathrm{do}(T)\,G$, in which $T$ is \emph{isolated}; hence the
 back-door criterion holds with $Z = \varnothing$.
 \end{theorem}
 
-\begin{proof}
-Randomizing $T$ removes $T$'s incoming edges, and the back-door
-mutilation removes its outgoing edges; so in the mutilated graph $T$ has no
-incident edges at all, and $d$-separation from $R$ with an empty
-conditioning set is immediate.
-\end{proof}
+\pfref{thm:rctsyncorrect}
 
-The isolation argument is what makes this short. An earlier formulation
-introduced a fresh randomizer node feeding $T$, and the corresponding proof
-required an extensive adjacency analysis; keeping the node set fixed and
-reading randomization as surgery on the existing node replaced that with
+The isolation argument is what makes this short: keeping the node set fixed
+and reading randomization as surgery on the existing node reduces it to
 three small lemmas.
 
 \section{A worked experiment: the two-node randomized trial}
@@ -918,32 +818,14 @@ by ``return your own exogenous slot''.
 $\fv(G_2, F', T, \lceil w \rceil) = \enc_T(w_T)$.
 \end{lemma}
 
-\begin{proof}
-$T$ is parentless, so the engine evaluates $f'_T$ on $T$'s own slot and an
-empty parent list. After randomization $f'_T$ \emph{is} ``return the
-noise'', so it hands back the stored code unchanged. No decoding happens at
-all here.
-\end{proof}
+\pfref{lem:rct2T}
 
 \begin{lemma}[$R$: the induction step]
 \label{lem:rct2R}
 $\fv(G_2, F', R, \lceil w \rceil) = \enc_R\bigl(h(w_T, w_R)\bigr)$.
 \end{lemma}
 
-\begin{proof}
-By the engine's characterisation, $R$'s value is $f'_R$ applied to $R$'s own
-slot together with the list of its parents' computed values. $R$'s parent
-list is $[T]$, whose single entry is $\enc_T(w_T)$ by
-Lemma~\ref{lem:rct2T}. Unfolding the elaboration at $R$ gives
-\[
-  \enc_R\Bigl(F_R\bigl(\dect_R(\enc_R(w_R)),\;
-     \lambda p.\,\dect_p(\,\cdot\,)\bigr)\Bigr),
-\]
-where the parent lookup resolves $T$'s index in $[T]$ to position $0$ and
-so decodes $\enc_T(w_T)$ to $w_T$. Both decodings --- $R$'s own noise and
-$T$'s parent value --- are instances of $\dect \circ \enc = \id$, so the
-value is $\enc_R(h(w_T, w_R))$.
-\end{proof}
+\pfref{lem:rct2R}
 
 \begin{remark}[Why this matters beyond the example]
 \label{rem:depth2}
@@ -956,31 +838,24 @@ elaboration-correctness statement
 which \S\ref{sec:limits} lists as open, and it shows where the difficulty
 is \emph{not}.
 
-It is not in the coding. One might expect \eqref{eq:elabcorrect} to need
-the reverse cancellation $\enc(\dect(m)) = m$, but it needs no such thing.
-The parent view that $\elab$ supplies hands the mechanism
-$\dect_p(\text{$p$'s slot in the positional list})$, while $\solve_F(w)(p)$
-is \emph{by definition} $\dect_p$ of the solver's value at $p$. So once that
-slot is known to hold the solver's value at $p$, the two sides agree
-definitionally, and no claim about which naturals are in range appears
-anywhere. All the arithmetic is the one available cancellation, used twice:
-on $n$'s own noise, and to strip the outer $\enc_n$. That is precisely why
-the proof of Lemma~\ref{lem:rct2R} consists of applying it twice and
-nothing else.
+It is not in the coding: the parent view that $\elab$ supplies hands the
+mechanism $\dect_p$ of $p$'s slot in the positional list, while
+$\solve_F(w)(p)$ is by definition $\dect_p$ of the solver's value at $p$,
+so once that slot is known to hold the solver's value the two sides agree
+definitionally. No reverse cancellation $\enc(\dect(m)) = m$ is needed,
+and no claim about which naturals are in range appears anywhere --- which
+is why the proof of Lemma~\ref{lem:rct2R} applies the one available
+cancellation twice and does nothing else.
 
 What \eqref{eq:elabcorrect} does need is a \textbf{positional--keyed
-correspondence}. The engine hands a mechanism its parents' values as a
-\emph{list, in the order of $\pa(n)$}; $\elab$ reads a parent \emph{by
-node}, resolving it through that parent's index into the same list. Nothing
-so far proves the two agree, and that --- bookkeeping about the engine's
-internals, not about the coding --- is the open obligation. In the present
-example the correspondence holds by computation, because $\pa(R) = [T]$ and
-the index is $0$.
-
-Note finally that no induction on the graph seems to be required: the
-engine's characterisation already unfolds one step at \emph{every} node
-independently, and \eqref{eq:elabcorrect} only needs $\solve_F(w)(p)$ to be
-\emph{named} on the right-hand side, not computed.
+correspondence}: the engine hands a mechanism its parents' values as a
+list in the order of $\pa(n)$, while $\elab$ reads a parent by node,
+resolving it through that parent's index into the same list. Nothing so
+far proves the two agree, and that --- bookkeeping about the engine's
+internals, not about the coding --- is the open obligation. Here it holds
+by computation, since $\pa(R) = [T]$ and the index is $0$. No induction on
+the graph seems to be required: the engine's characterisation already
+unfolds one step at every node independently.
 \end{remark}
 
 \subsection{The outcome law}
@@ -990,11 +865,7 @@ independently, and \eqref{eq:elabcorrect} only needs $\solve_F(w)(p)$ to be
 $\;\mathsf{fdist\_log}(e, R) = \push{(\lambda w.\, h(w_T, w_R))} P_\Ctx$.
 \end{theorem}
 
-\begin{proof}
-The protocol logs one entry, at $R$; reading it back gives
-$\dect_R$ of Lemma~\ref{lem:rct2R}, i.e.\ $h(w_T, w_R)$. The law is then
-the pushforward of $P_\Ctx$ along that map, by definition.
-\end{proof}
+\pfref{thm:rct2law}
 
 This is true but not yet informative: it still mentions the joint context,
 and the same statement holds for \emph{any} protocol that measures $R$.
@@ -1012,44 +883,22 @@ response laws --- draw the treatment from $T$'s law, then push $R$'s noise
 through the response table at that treatment.
 \end{theorem}
 
-\begin{proof}
-By Theorem~\ref{thm:rct2law} it suffices to factorise the pushforward. The
-map $w \mapsto h(w_T, w_R)$ is the composite of $w \mapsto (w_T, w_R)$ with
-the uncurried $h$. The first pushes $P_\Ctx$ forward to $P_T \otimes P_R$
-by Lemma~\ref{lem:pairmarg}, since $T \neq R$; and pushing the uncurried
-$h$ through a product law is exactly the mixture, by
-Lemma~\ref{lem:uncurry}.
-\end{proof}
+\pfref{thm:rct2}
 
 \subsection{What the example shows}
 
-\begin{itemize}
-\item \textbf{Randomization erased the biased mechanism.} $F_T$ assigns
-      everyone placebo, and it does not appear in
-      Theorem~\ref{thm:rct2}'s conclusion. The surgery really did
-      something, and the theorem is the witness.
-\item \textbf{The mixture is the content.} Independence of $T$'s value from
-      $R$'s noise is what makes the outcome law decompose by treatment arm,
-      and that decomposition is what an experimenter relies on when
-      comparing arms. Theorem~\ref{thm:rct2law} alone would not support
-      that reading.
-\item \textbf{The coin needs no new machinery here.}
-      Theorem~\ref{thm:rct2} is general in $P$, so ``the coin at $T$'' is
-      simply which $P$ one instantiates it at; a balanced trial is
-      $P_T$ uniform, an unequal allocation is any other $P_T$, and nothing
-      in the proof depends on the choice. A \emph{law-level} randomization
-      operation --- replacing $P_T$ by a declared coin --- becomes
-      necessary only for a compositional runner that walks the operation
-      list. Note also that hoisting such law-surgery to before sampling is
-      sound only when all surgery precedes all measurement, as it does in
-      this protocol; it would not survive adaptive designs, nor protocols
-      that measure before operating.
-\item \textbf{It is still one node's marginal.} The theorem is about $R$'s
-      law, not about the joint law of $(T,R)$ that a conditional query would
-      need. Lemma~\ref{lem:pairmarg} is the piece that makes such joints
-      expressible; using it to state an identification result is Theorem B,
-      which remains open.
-\end{itemize}
+Randomization erased the biased mechanism: $F_T$ assigns everyone placebo,
+and it does not appear in Theorem~\ref{thm:rct2}'s conclusion. The mixture
+is the content --- independence of $T$'s value from $R$'s noise is what
+makes the outcome law decompose by arm, and that decomposition is what an
+experimenter relies on when comparing arms; Theorem~\ref{thm:rct2law}
+alone would not support that reading. The coin needs no new machinery,
+since Theorem~\ref{thm:rct2} is general in $P$: a balanced trial is $P_T$
+uniform, an unequal allocation any other $P_T$, and a law-level
+randomization operation becomes necessary only for a compositional runner
+that walks the operation list. And it is still one node's marginal, not
+the joint law of $(T,R)$ that a conditional query needs ---
+Lemma~\ref{lem:pairmarg} is what makes such joints expressible.
 
 \subsection{The same trial over arbitrary finite domains}
 \label{sec:rct2gen}
@@ -1098,56 +947,34 @@ $[\mathsf{Randomize}(T), \mathsf{Measure}(R)]$ satisfies
 \]
 \end{theorem}
 
-\begin{proof}
-Verbatim the proofs of Lemmas~\ref{lem:rct2T} and~\ref{lem:rct2R} and of
-Theorems~\ref{thm:rct2law} and~\ref{thm:rct2}, with $\enc_2, \dect_2$
-replaced by the canonical codes and $\textsf{placebo}$ by
-$\mathit{bias}(u)$. Every step that previously appealed to a concrete
-table appeals instead to cancellation, and no step appeals to
-$|A|$ or $|B|$.
-\end{proof}
+\pfref{thm:rct2gen}
 
-Three things are generalised at once, and each says something.
-
-\begin{itemize}
-\item \textbf{$|\dom_R|$ is free.} The response may be binary, ordinal
-      with any number of grades, or any other finite measurement.
-\item \textbf{$|\dom_T|$ is free, so this is a $k$-arm trial.} Taking
-      $k = |A|$ arms with allocation law $P_T$ covers the balanced
-      $k$-arm design ($P_T$ uniform), the familiar two-arm trial with any
-      allocation ratio, and dose-response designs; $|A| = 1$ degenerates
-      to a single-arm study, where the statement remains true and empty of
-      content. Since Theorem~\ref{thm:rct2gen} is uniform in $P$, both
-      the arm count and the randomization ratio are free parameters of the
-      \emph{instance}, not of the theorem.
-\item \textbf{The erased mechanism is arbitrary.} Above, the mechanism
-      that randomization overrode was the constant $\textsf{placebo}$.
-      Here it is an arbitrary function of $T$'s own noise, and
-      $\mathit{bias}$ does not occur in the conclusion. That absence
-      sharpens the reading of Theorem~\ref{thm:rct2} from ``randomization
-      erased a constant'' to ``randomization erased whatever was there''.
-\end{itemize}
+Three things generalise at once: $|\dom_R|$ is free, so the response may be
+any finite measurement; $|\dom_T|$ is free, so this is a $k$-arm trial,
+covering balanced and unequal allocations and dose-response designs, with
+both the arm count and the ratio parameters of the \emph{instance} rather
+than of the theorem; and the erased mechanism is an arbitrary function of
+$T$'s own noise, which sharpens the reading of Theorem~\ref{thm:rct2} from
+``randomization erased a constant'' to ``randomization erased whatever was
+there''.
 
 \begin{remark}[Why both versions are kept]
 The canonical codes are built from $\mathsf{enum\_rank}$, which does not
 reduce, so the abstract development proves laws but cannot discharge
 anything by computation --- whereas the concrete trial of
-\S\ref{sec:rct2} evaluates its elaboration and its ordering side
-conditions by $\mathsf{reflexivity}$. The two versions are therefore
-complementary: the concrete one is the one that \emph{runs}, the abstract
-one is the one that \emph{generalises}, and both are retained in the
-formalisation.
+\S\ref{sec:rct2} evaluates its elaboration by $\mathsf{reflexivity}$. The
+concrete version is the one that \emph{runs}, the abstract one the one
+that \emph{generalises}, and both are retained.
 \end{remark}
 
 \begin{remark}[What is not claimed]
 \label{rem:notinstance}
 Theorem~\ref{thm:rct2} is \emph{not} literally an instance of
-Theorem~\ref{thm:rct2gen}. The concrete development uses hand-written
-codes and the abstract one uses the canonical enumeration, and nothing
-proved so far says that the logged law is independent of which cancelling
-code pair is chosen. That independence is true, and it follows from
-general elaboration correctness (\S\ref{sec:limits}); it is not
-available from the two-node development on its own.
+Theorem~\ref{thm:rct2gen}: the concrete development uses hand-written
+codes and the abstract one the canonical enumeration, and nothing proved
+so far says the logged law is independent of which cancelling code pair is
+chosen. That independence follows from general elaboration correctness
+(\S\ref{sec:limits}), not from the two-node development.
 \end{remark}
 
 \subsection{The concrete run against the abstract law}
@@ -1175,13 +1002,7 @@ For every experiment $e$, every node $n$ and every $v \in \dom_n$,
 \]
 \end{lemma}
 
-\begin{proof}
-The mean of an indicator is the probability of its event, and
-$P_\Ctx(A_v)$ is by definition the mass that
-$\push{(\lambda w.\,\logv(e,w,n))}P_\Ctx$ assigns to $v$ --- which is
-$\mathsf{fdist\_log}(e,n)(v)$. Unfolding both sides is the whole proof;
-no hypothesis on $e$, on $n$, or on the graph is required.
-\end{proof}
+\pfref{lem:eindany}
 
 \begin{theorem}[Experiment-level concentration]
 \label{thm:llnany}
@@ -1199,10 +1020,7 @@ and every $\varepsilon > 0$,
 \]
 \end{theorem}
 
-\begin{proof}
-Verbatim the proof of Theorem~\ref{thm:lln}, with Lemma~\ref{lem:eindany}
-in place of Lemma~\ref{lem:eind}.
-\end{proof}
+\pfref{thm:llnany}
 
 This is the two semantics meeting at their own level of generality: the
 concrete semantics produces the left-hand quantity, the abstract semantics
@@ -1233,17 +1051,7 @@ is an $N_0$ such that for all $N \ge N_0$ that probability is at most
 $\delta$.
 \end{theorem}
 
-\begin{proof}
-The first display is Theorem~\ref{thm:llnany} with its target rewritten by
-Theorem~\ref{thm:rct2gen}. For the second, put
-$C = \Var_{P_\Ctx}[\Ind{A_v}]$ and take
-$N_0 = \lfloor C / (\delta\varepsilon^{2}) \rfloor$; since the reals are
-archimedean, $C/(\delta\varepsilon^{2}) < N_0 + 1 \le N+1$ whenever
-$N \ge N_0$, and rearranging gives
-$C/((N+1)\varepsilon^{2}) \le \delta$. No sign information about $C$ is
-needed, because the archimedean bound $x < \lfloor x \rfloor + 1$ holds
-for every real $x$.
-\end{proof}
+\pfref{thm:rct2emp}
 
 This is the statement the project was aiming at in miniature: a protocol
 written in the language, run concretely on a sample, reports numbers that
@@ -1254,41 +1062,33 @@ makes it an answer to a causal question rather than merely a marginal.
 \begin{remark}[The declared size \emph{is} the sample size]
 \label{rem:twosizes}
 The size recorded in the experiment and the number of units drawn are the
-same throughout Theorem~\ref{thm:rct2emp}: the protocol is the one whose
-declared size is $N+1$, and the rate quotes that declared size, so a
-record whose declaration disagreed with its sample is not an instance of
-the theorem. This is the point of pre-registering a size, and it is the
-discipline Theorem~\ref{thm:lln} enforces through an explicit hypothesis;
-here the two are identified by construction, so no hypothesis is needed.
+same throughout Theorem~\ref{thm:rct2emp}, so a record whose declaration
+disagreed with its sample is not an instance of the theorem. That is the
+point of pre-registering a size.
 
-Tying them is not free, and the cost is worth recording because it is the
-only place in \S\ref{sec:rct2emp} where the declared size does any
-technical work. In the $\varepsilon$-$\delta$ statement the sample size is
-\emph{quantified}, so the variance constant from which $N_0$ is chosen
-must not itself depend on the $N$ being quantified --- and written
-directly it appears to, since the experiment mentions $N+1$. What rescues
-it is that elaboration never reads the declared size:
+Tying them costs one observation. In the $\varepsilon$-$\delta$ statement
+the sample size is \emph{quantified}, so the variance constant from which
+$N_0$ is chosen must not itself depend on the $N$ being quantified --- and
+written directly it appears to, since the experiment mentions $N+1$. What
+rescues it is that elaboration never reads the declared size,
 \[
   \llbracket \langle \ell, F, \vec{o}, M \rangle \rrbracket
   \;=\;
   \llbracket \langle \ell, F, \vec{o}, M' \rangle \rrbracket
   \qquad\text{for all } M, M',
 \]
-by conversion, since the elaborated experiment is built from the labels,
-the mechanisms and the operation list alone. Hence the indicator of ``this
-unit logged $v$'' --- and so its variance --- is literally the same term at
-every declared size, and the constant can be named once at a fixed index.
-That named constant is what appears in the bound.
+by conversion, so the indicator of ``this unit logged $v$'' --- and hence
+its variance --- is literally the same term at every declared size, and
+the constant can be named once at a fixed index.
 \end{remark}
 
 \begin{remark}[One value at a time]
 \label{rem:onevalue}
 Theorem~\ref{thm:rct2emp} is convergence \emph{at a fixed value} $v$, not
-convergence of the empirical distribution to the law as a whole. Since
-$B$ is finite, a union bound over $B$ upgrades it: replacing $\delta$ by
-$\delta/|B|$ in each of the $|B|$ instances bounds the probability that
-\emph{any} value's frequency is off by more than $\varepsilon$, which is
-convergence in the supremum distance. That step is not yet formalised.
+of the empirical distribution as a whole. Since $B$ is finite a union
+bound upgrades it, replacing $\delta$ by $\delta/|B|$ in each of the $|B|$
+instances. That step is formalised for the \emph{conditional} estimator
+(\S\ref{sec:unifcond}), but not for this unconditional one.
 \end{remark}
 
 \section{Confounding, and what randomization removes}
@@ -1354,15 +1154,7 @@ We compare two protocols on this one model:
 Under $e_{\mathrm{trial}}$, $\;\solve(w)(Y) = h(w_X, w_Z)$.
 \end{lemma}
 
-\begin{proof}
-$Z$ is a source and echoes its noise, giving $w_Z$. At $X$ the mechanism
-has been replaced by ``return your own slot'', so $X$ takes $w_X$. The
-engine still \emph{builds and passes} $X$'s parent list $[Z]$, and the
-replaced mechanism simply ignores it --- that discarded list is the edge
-$Z \to X$ being severed. At $Y$ the positional list is
-$[\enc_X(w_X), \enc_Z(w_Z)]$, and the keyed reads recover $w_X$ and $w_Z$
-by the cancellation, so $Y$'s value is $h(w_X,w_Z)$.
-\end{proof}
+\pfref{lem:rct3}
 
 \begin{theorem}[Outcome law of the trial]
 \label{thm:rct3}
@@ -1373,12 +1165,7 @@ by the cancellation, so $Y$'s value is $h(w_X,w_Z)$.
 \]
 \end{theorem}
 
-\begin{proof}
-As for Theorem~\ref{thm:rct2}: push Lemma~\ref{lem:rct3} forward, factorise
-the joint at the distinct nodes $X$ and $Z$ by Lemma~\ref{lem:pairmarg},
-and convert the product pushforward into a mixture by
-Lemma~\ref{lem:uncurry}.
-\end{proof}
+\pfref{thm:rct3}
 
 The confounder has not left the model --- $h$ still reads it, so age still
 moves the outcome. What has gone is the \emph{correlation} between age and
@@ -1392,12 +1179,7 @@ outer integral ranges over a treatment law that no longer depends on $Z$.
 Under $e_{\mathrm{obs}}$, $\;\solve(w)(Y) = h\bigl(\beta(w_Z),\, w_Z\bigr)$.
 \end{lemma}
 
-\begin{proof}
-Now $F_X$ is live, so the chain is three deep: $Z$ echoes $w_Z$; $X$ reads
-$Z$ through its parent list and returns $\beta(w_Z)$; $Y$ reads both and
-returns $h(\beta(w_Z), w_Z)$. Each parent value arrived as $\enc$ of
-something and is recovered by the cancellation, exactly as at depth two.
-\end{proof}
+\pfref{lem:obs3}
 
 \begin{theorem}[Observational law]
 \label{thm:obs3}
@@ -1408,11 +1190,7 @@ something and is recovered by the cancellation, exactly as at depth two.
 \]
 \end{theorem}
 
-\begin{proof}
-Push Lemma~\ref{lem:obs3} forward. The resulting map factors through
-$w \mapsto w_Z$, so the single-node marginal Lemma~\ref{lem:ctxmarg}
-replaces $P_\Ctx$ by $P_Z$.
-\end{proof}
+\pfref{thm:obs3}
 
 This law is a function of the \textbf{confounder alone}: $Z$ fixes the
 treatment, which fixes the response. There is no treatment law left to
@@ -1434,16 +1212,7 @@ witnessed at the outcome $\textsf{worse}$, which the trial gives mass
 $\tfrac{1}{3}$ and the observational protocol mass $0$.
 \end{theorem}
 
-\begin{proof}
-The only pair with $h(t,a) = \textsf{worse}$ is
-$(\textsf{placebo}, \textsf{old})$. Under Theorem~\ref{thm:rct3} the
-treatment and the age are independent, so that pair has probability
-$P_X(\textsf{placebo}) \cdot P_Z(\textsf{old}) = \tfrac{1}{3}$ at $P_3$.
-Under Theorem~\ref{thm:obs3} the outcome is $\textsf{worse}$ only if
-$\beta(a) = \textsf{placebo}$ and $a = \textsf{old}$; but
-$\beta(\textsf{old}) = \textsf{drug}$, so no age qualifies and the mass is
-$0$. Since $\tfrac13 \neq 0$ the two laws are distinct.
-\end{proof}
+\pfref{thm:sep3}
 
 The mechanism of the separation is worth stating in words: $\textsf{worse}$
 arises only from \emph{placebo and old}, and the confounded mechanism
@@ -1517,15 +1286,7 @@ In $G_3$ with $F = F_3$, for every $t$,
 $\;\solvedo_{X := t}(w)(Y) = h(t, w_Z)$.
 \end{lemma}
 
-\begin{proof}
-Three solves on the surgered graph in topological order, as for
-Lemma~\ref{lem:rct3}. $Z$ is untouched by the surgery and echoes $w_Z$. At
-$X$ the mechanism is gone and so is the parent list --- in
-$\mathrm{do}(X)G_3$ one computes $\pa(X) = \varnothing$ --- so $X$ is the
-constant $\enc_X(t)$. At $Y$ the surgery changed nothing: $\pa(Y) = [X;Z]$
-still, so the positional list is $[\enc_X(t), \enc_Z(w_Z)]$ and the keyed
-reads recover $t$ and $w_Z$ by the cancellation.
-\end{proof}
+\pfref{lem:do3}
 
 Compare Lemma~\ref{lem:rct3}. Randomization leaves the edge $Z \to X$ in
 the graph and has $X$'s replaced mechanism discard the parent list it is
@@ -1540,10 +1301,7 @@ value is free of $Z$.
 \]
 \end{theorem}
 
-\begin{proof}
-Push Lemma~\ref{lem:do3} forward and marginalise the context at the single
-node $Z$ by Lemma~\ref{lem:ctxmarg}.
-\end{proof}
+\pfref{thm:do3}
 
 Notice which law survives. Setting $X$ kills $X$'s draw, so the only
 randomness left upstream of $Y$ is the confounder's own noise, and the
@@ -1561,9 +1319,7 @@ on $Z$.
 \]
 \end{theorem}
 
-\begin{proof}
-Theorem~\ref{thm:rct3} with its mixand rewritten by Theorem~\ref{thm:do3}.
-\end{proof}
+\pfref{thm:rct3do}
 
 That is the causal reading of the trial: \emph{the law the randomized
 protocol logs at $Y$ is the mixture, over the randomization law, of the
@@ -1584,10 +1340,7 @@ At $P_3$,
 \]
 \end{corollary}
 
-\begin{proof}
-Theorem~\ref{thm:sep3} says the two protocols' laws differ, and
-Theorem~\ref{thm:rct3do} says the trial's law is the right-hand side.
-\end{proof}
+\pfref{cor:obsnotdo}
 
 So on this model seeing is not doing, and the gap is exactly the bias the
 trial exists to remove --- stated not as a slogan but as an inequation
@@ -1598,14 +1351,11 @@ would be mistaken for.
 \label{rem:notthebridge}
 Theorem~\ref{thm:rct3do} is proved by computing both sides on this model,
 \emph{not} by the general randomize/$\mathrm{do}$ bridge. That bridge
-exists per unit as Theorem~\ref{thm:randdo}; its distributional lift is
-still open (\S\ref{sec:limits}). Lifting it would mean reconciling the
-draw written at the \emph{head} of the exogenous assignment with the slot
-$\lceil w \rceil$ already provides for the same node --- an equivalence
-argument, since the engine's lookup takes the first match --- and then
-pushing the per-unit identity through the mixture over the coin. Until
-that exists, what is established here is that the two readings
-\emph{agree on this model}, not in general.
+exists per unit as Theorem~\ref{thm:randdo}, and its distributional lift
+is now available as well (\S\ref{sec:general}), so this section's results
+are instances of general ones rather than isolated computations. They are
+kept for two reasons: the computation is short and concrete, and the
+general statement is validated against it.
 \end{remark}
 
 \subsection{The concrete run against the causal law}
@@ -1634,15 +1384,7 @@ is an $N_0$ such that for all $N \ge N_0$ that probability is at most
 $\delta$.
 \end{theorem}
 
-\begin{proof}
-Verbatim the proof of Theorem~\ref{thm:rct2emp}, with
-Theorem~\ref{thm:rct3do} naming the target in place of
-Theorem~\ref{thm:rct2gen}. Nothing about the model or the protocol enters
-the probability, by Theorem~\ref{thm:llnany}; the declared size is tied to
-the sample size in the same way, and the variance constant can be named
-once at a fixed declared size because elaboration drops the declared size
-(Remark~\ref{rem:twosizes}).
-\end{proof}
+\pfref{thm:rct3emp}
 
 This is the development's full arc on a model where randomization is doing
 real work: a protocol written in the language, elaborated and run
@@ -1653,8 +1395,9 @@ same model converges somewhere else.
 
 \begin{remark}[Still one value, and still no treatment column]
 \label{rem:rct3emplimits}
-Both displays fix a single $v \in \dom_Y$, so Remark~\ref{rem:onevalue}
-applies unchanged: a statement about the whole law wants the union bound.
+Both displays fix a single $v \in \dom_Y$; the union bound that upgrades
+this to a statement about the whole law is carried out for the
+\emph{conditional} estimator in \S\ref{sec:unifcond}, not for these.
 Separately, $e_{\mathrm{trial}}$ does not measure $X$ ---
 $\mathsf{is\_measured}(e_{\mathrm{trial}}, X)$ is $\mathrm{false}$ by
 computation --- so the log has no treatment column, and no \emph{per-arm}
@@ -1721,13 +1464,7 @@ unfolding, with no hypothesis on $e$, on the nodes, or on the graph.
 \]
 \end{theorem}
 
-\begin{proof}
-The $X$ column logs $w_X$ and the $Y$ column $h(w_X,w_Z)$, so the joint is
-the pushforward of $P_\Ctx$ along $w \mapsto (w_X, h(w_X,w_Z))$. Factorise
-at the distinct nodes $X,Z$ by Lemma~\ref{lem:pairmarg}, convert to a
-mixture by Lemma~\ref{lem:uncurry}, and rewrite the mixand by
-Theorem~\ref{thm:do3}.
-\end{proof}
+\pfref{thm:rct3joint}
 
 This says the randomized trial is \emph{jointly} a mixture of
 do-experiments, not merely a mixture of their marginals: draw the arm from
@@ -1746,13 +1483,7 @@ If $P_X(x) \neq 0$ then
 \]
 \end{theorem}
 
-\begin{proof}
-By Lemma~\ref{lem:prout} the conditional is
-$\mathsf{fdist\_log}_2(e_{\mathrm{full}},X,Y)(x,y) /
- \mathsf{fdist\_log}(e_{\mathrm{full}},X)(x)$. The denominator is
-$P_X(x)$, and by Theorem~\ref{thm:rct3joint} the numerator is
-$P_X(x) \cdot \fdo_{X := x}(Y)(y)$; divide.
-\end{proof}
+\pfref{thm:rct3cond}
 
 That is the sense in which conditioning on the arm of a \emph{randomized}
 trial is legitimate. Under $e_{\mathrm{full}}$ the logged $X$ is $w_X$,
@@ -1768,7 +1499,14 @@ $P_X(x) \neq 0$ is the overlap condition, and it appears in exactly one
 place: the division. It is a condition on the \emph{numbers}, so no
 well-formedness discipline can discharge it --- which is why it is a
 hypothesis on the one statement that divides, rather than a side condition
-baked into a conditional-distribution type. Note what does \emph{not} need
+baked into a conditional-distribution type. Such a type exists in the
+library --- infotheo's $\mathsf{fdist\_cond}$ and $\mathsf{jfdist\_cond}$
+--- and was deliberately not used. Each is built inside a section that
+assumes positivity, so the distribution does not exist until that
+assumption is discharged, and every statement mentioning it inherits the
+side condition. Taking the conditional as a ratio of two masses keeps it a
+plain real and localises the obligation to the division.
+Note what does \emph{not} need
 it: Theorem~\ref{thm:do3} holds for every $x$, including arms of
 probability zero. The interventional law exists whether or not a trial can
 estimate it; overlap is about \emph{estimating} it.
@@ -1809,14 +1547,7 @@ $|\hat a - a| \le \delta$ and $|\hat b - b| \le \delta$ then
 \]
 \end{lemma}
 
-\begin{proof}
-No probability is involved. From $|\hat b - b| \le \delta \le b/2$ we get
-$b/2 \le \hat b$, so the estimated denominator cannot collapse. Over the
-common denominator $\hat b\,b$ the numerator is
-$(\hat a - a)b - a(\hat b - b)$, of absolute value at most
-$\delta b + a\delta \le 2\delta b$ since $a \le b$; divide by
-$\hat b\, b \ge (b/2)\,b$.
-\end{proof}
+\pfref{lem:ratio}
 
 \begin{theorem}[The conditional estimator converges]
 \label{thm:empcond}
@@ -1831,19 +1562,7 @@ $N \ge N_0$,
 \]
 \end{theorem}
 
-\begin{proof}
-By Lemma~\ref{lem:ratio}, if both halves are within $\delta'$ of their
-targets then the quotient is within $4\delta'/P_\Ctx(B)$ of
-$\Pr[A \mid B]$. So the event that the quotient is off by $\varepsilon$ is
-\emph{contained} in the union of the two events that a half is off by
-$\delta'$, and monotonicity plus a union bound reduce the claim to two
-instances of the event-level weak law above. Taking
-$\delta' = \min\bigl(P_\Ctx(B)/2,\ \varepsilon P_\Ctx(B)/8\bigr)$ makes
-both side conditions hold --- the first argument keeps the estimated
-denominator away from zero, the second makes the quotient bound beat
-$\varepsilon$ --- and then $N_0$ is chosen archimedean\-ly from the two
-variances, as in Theorem~\ref{thm:rct2emp}.
-\end{proof}
+\pfref{thm:empcond}
 
 \begin{theorem}[What a confounded trial reports, arm by arm]
 \label{thm:rct3arm}
@@ -1854,11 +1573,7 @@ $P(Y = y \mid \mathrm{do}(X := x))$ with probability at least
 $1 - \delta$.
 \end{theorem}
 
-\begin{proof}
-Theorem~\ref{thm:empcond} with $A := A_y^{Y}$ and $B := A_x^{X}$, whose
-mass is $P_X(x)$ by Lemma~\ref{lem:prout} and the $X$-column law, and the
-target rewritten by Theorem~\ref{thm:rct3cond}.
-\end{proof}
+\pfref{thm:rct3arm}
 
 This is the arm-by-arm counterpart of \S\ref{sec:rct3emp}, and the stronger
 of the two: that one converges to the mixture over the allocation, this one
@@ -1867,6 +1582,273 @@ the events, which costs nothing --- by Remark~\ref{rem:twosizes} the
 elaborated experiment is the same term at every declared size --- and is
 what lets the conditioning event stay fixed while the sample size is
 quantified.
+
+\subsection{Uniform over the outcome values}
+\label{sec:unifcond}
+
+Theorem~\ref{thm:rct3arm} fixes the outcome value \emph{before} choosing
+the sample size, so it does not say that the trial's reported table for
+arm $x$ is close to the interventional law --- only that any one entry of
+it is. Closing that gap needs a single sample size good for every value at
+once.
+
+Boole's inequality supplies it, and cheaply, for a reason worth naming:
+the $\delta'$ that Theorem~\ref{thm:empcond} runs on is
+$\min\bigl(P_\Ctx(B)/2,\ \varepsilon P_\Ctx(B)/8\bigr)$, which depends
+only on the \emph{conditioning} event and on $\varepsilon$ --- not on
+which member of the family is being estimated. So one $\delta'$, and
+therefore one $N_0$, serves the whole family; the only price is that the
+variances add. No maximum over per-value sample sizes is needed.
+
+Write, for a target $\theta$,
+\[
+  \mathrm{off}(A,B,N,\theta,\varepsilon)
+  \;=\;
+  \bigl\{\, s \;\big|\;
+    \bigl|\emp{A \mid B}_N(s) - \theta\bigr| \ge \varepsilon \,\bigr\}
+  \;\subseteq\; \Smp_{N+1}
+\]
+for the event that a sample of $N+1$ units misreports the conditional
+frequency of $A$ given $B$ by $\varepsilon$ or more.
+
+\begin{theorem}[Chebyshev for a family]
+\label{thm:empcondfam}
+Let $I$ be a finite index type and $A_i \subseteq \Ctx$ for $i \in I$. If
+$\delta'$ satisfies the two side conditions of Theorem~\ref{thm:empcond}
+then
+\[
+  \Pr_{\,s}\Bigl[\;\bigcup_{i \in I}
+    \mathrm{off}\bigl(A_i,\,B,\,N,\,\Pr[A_i \mid B],\,\varepsilon\bigr)
+  \;\Bigr]
+  \;\le\;
+  \frac{\sum_{i \in I}
+        \bigl(\Var[\Ind{A_i \cap B}] + \Var[\Ind{B}]\bigr)}
+       {(N+1)\,\delta'^{\,2}} .
+\]
+\end{theorem}
+
+\pfref{thm:empcondfam}
+
+\begin{corollary}[The reported distribution converges]
+\label{cor:empcondfam}
+Let $\theta_i$ be targets with $\theta_i = \Pr[A_i \mid B]$ for every $i$.
+If $P_\Ctx(B) > 0$ then for every $\varepsilon > 0$ and $\delta > 0$ there
+is an $N_0$ such that for all $N \ge N_0$,
+\[
+  \Pr_{\,s}\Bigl[\;\bigcup_{i \in I}
+    \mathrm{off}(A_i,B,N,\theta_i,\varepsilon)\;\Bigr] \;\le\; \delta ;
+\]
+that is, with probability at least $1 - \delta$, \emph{every} $i$ is
+reported within $\varepsilon$ of its target.
+\end{corollary}
+
+The targets are a parameter, with the identification supplied as a
+hypothesis, for the same reason Theorem~\ref{thm:rct3cond} was stated that
+way: it is what lets a caller conclude about an \emph{interventional} law.
+The estimator converges to whatever the conditional has been proved equal
+to.
+
+\begin{theorem}[What a confounded trial reports, as a distribution]
+\label{thm:rct3armall}
+Fix $x$ with $P_X(x) > 0$. For every $\varepsilon > 0$ and $\delta > 0$
+there is an $N_0$ such that for all $N \ge N_0$, with probability at least
+$1 - \delta$, \emph{every} outcome value $y$ satisfies
+\[
+  \Bigl|\;\emp{A_y^{Y} \mid A_x^{X}}_N(s)
+  \;-\; P\bigl(Y = y \mid \mathrm{do}(X := x)\bigr)\;\Bigr|
+  \;<\; \varepsilon .
+\]
+\end{theorem}
+
+\pfref{thm:rct3armall}
+
+This is the statement an experimenter would recognise as ``the trial
+estimates the causal effect'': not one number, but the whole outcome
+distribution under each arm, uniformly, from one pre-registrable sample
+size on. Overlap remains the only assumption on $P$.
+
+\section{The general theorem: randomization identifies, in any model}
+\label{sec:general}
+
+\S\ref{sec:rct3} proves identification on one model, by computing both
+sides of each equation. This section proves the same shape for
+\emph{every} well-formed acyclic model, so that \S\ref{sec:rct3} becomes
+an instance --- and the instance is checked against the general statement
+in the formalisation, where the model-specific side conditions discharge
+by computation. That check is what makes the generalisation faithful
+rather than merely plausible.
+
+Fix a well-formed acyclic $G$, any mechanism family $F$, any exogenous law
+$P$, and two nodes: $a$, which the protocol randomizes, and $n$, whose
+value it reports. They need not be distinct. The protocol is
+\[
+  e_{\mathrm{full}} \;=\;
+  \bigl[\;\mathsf{Randomize}(a),\ \mathsf{Measure}(a),\ \mathsf{Measure}(n)\;\bigr].
+\]
+
+\subsection{Three ingredients}
+\label{sec:genparts}
+
+\begin{lemma}[Randomizing is intervening at the draw]
+\label{lem:solverand}
+Write $\solve^{\mathrm{rand}}_a$ for the solve in the model whose
+mechanism at $a$ has been replaced by ``return your own exogenous slot''.
+Then for every context $w$ and every node $m$,
+\[
+  \solve^{\mathrm{rand}}_a(w)(m) \;=\; \solvedo_{a := w_a}(w)(m) .
+\]
+\end{lemma}
+
+\pfref{lem:solverand}
+
+This is the typed lift of Theorem~\ref{thm:randdo}, and the lift turned
+out to be pure bookkeeping, for a reason worth recording. The engine
+reads the exogenous assignment \emph{only} through
+$\mathsf{get\_assigned\_value}$, and the recursion over the topological
+order passes it along untouched. So $\fv$ cannot distinguish two
+assignments that agree pointwise --- unconditionally, with no
+well-formedness, acyclicity or completeness hypothesis --- and the draw
+that Theorem~\ref{thm:randdo} writes at the \emph{head} of the list is
+simply a duplicate of the slot $\lceil w \rceil$ already carries.
+
+\begin{lemma}[Setting a node kills its draw]
+\label{lem:solvedooff}
+If $w$ and $w'$ agree at every node other than $a$, then
+$\solvedo_{a := v}(w)(m) = \solvedo_{a := v}(w')(m)$ for every node $m$.
+\end{lemma}
+
+\pfref{lem:solvedooff}
+
+This is \emph{not} an instance of the pointwise-agreement argument above,
+and the reason is worth naming. The engine does look up the intervened
+node's slot: $\mathsf{get\_value\_of\_node}$ consults it before calling
+the mechanism, so two assignments differing there are not interchangeable
+in general. What rescues the surgered case is that the constant mechanism
+discards the value it is handed. The slot is therefore read for its
+$\mathsf{Some}/\mathsf{None}$ status alone, and any two assignments that
+both supply it agree.
+
+\begin{theorem}[Splitting one coordinate off the exogenous law]
+\label{thm:splitoff}
+Let $F_{(\cdot)} : \dom_a \to \Ctx \to B$ be a family in which each $F_x$
+ignores the $a$ slot. Then
+\[
+  \push{\bigl(\lambda w.\,(w_a,\ F_{w_a}(w))\bigr)} P_\Ctx
+  \;=\;
+  \int_{x \sim P_a} \push{(\lambda y.\,(x,y))}\ \push{(F_x)} P_\Ctx .
+\]
+\end{theorem}
+
+\pfref{thm:splitoff}
+
+\begin{remark}[Why the earlier factorisation technique does not reach this]
+\label{rem:whyupd}
+Lemma~\ref{lem:pairmarg} and its one-node companion factor the law at
+finitely many \emph{named} slots, and both go through by inserting an
+indicator as an extra factor of the product and then exchanging sum and
+product. That exchange requires the summand to be a product of per-node
+functions, so the technique cannot reach a side condition like ``this
+whole context solves to $v$'' --- which is exactly the shape a mechanism
+produces. It is not that the proof is harder; the method does not apply.
+
+What works instead is the coordinate overwrite $w[a := x]$. A summand
+that does not read slot $a$ takes the same value on every context with a
+given off-$a$ part, so the fibres of $w \mapsto w_a$ all carry equal
+sums, and that \emph{is} independence of the $a$ slot from everything
+else. Defining the overwrite needs a dependent cast, since the branch
+taken when $m = a$ must deliver a $\dom_m$ from an $x \in \dom_a$; four
+small lemmas about it are all that the rest of the development ever uses.
+\end{remark}
+
+\subsection{The factorisation, and identification}
+\label{sec:genjoint}
+
+\begin{lemma}[The randomized column is the coin]
+\label{lem:randfst}
+$\mathsf{fdist\_log}(e_{\mathrm{full}}, a) = P_a$.
+\end{lemma}
+
+\pfref{lem:randfst}
+
+Note what the conclusion does not mention: the mechanism that
+randomization displaced. This is the general form of the observation
+\S\ref{sec:rct2} makes about the biased assignment --- whatever was at
+$a$, after $\mathsf{Randomize}(a)$ the logged column is distributed as
+$a$'s own exogenous law and nothing else.
+
+\begin{theorem}[The logged pair factorises, in any model]
+\label{thm:randjoint}
+\[
+  \mathsf{fdist\_log}_2(e_{\mathrm{full}}, a, n)
+  \;=\;
+  \int_{x \sim P_a} \push{(\lambda y.\,(x,y))}\ \fdo_{a := x}(n) .
+\]
+\end{theorem}
+
+\pfref{thm:randjoint}
+
+\begin{corollary}[Identification by randomization]
+\label{cor:randcond}
+If $P_a(x) \neq 0$ then
+\[
+  \Pr\bigl[\,A^{n}_y \;\big|\; A^{a}_x\,\bigr]
+  \;=\; \fdo_{a := x}(n)(y)
+  \;=\; P\bigl(n = y \mid \mathrm{do}(a := x)\bigr).
+\]
+\end{corollary}
+
+\pfref{cor:randcond}
+
+Theorem~\ref{thm:rct3joint} and Theorem~\ref{thm:rct3cond} are the
+instances at $G_3$. Positivity appears where it did before and nowhere
+else: Theorem~\ref{thm:randjoint} needs none, since it is an identity of
+laws rather than an estimate.
+
+\begin{remark}[The degenerate case needs no exception]
+\label{rem:distinct}
+One might expect $n \neq a$ to be required, since the log is a list whose
+lookup takes the first match, so recovering $n$'s column seems to need
+that $a$'s entry does not answer to $n$'s key. It is not required. When
+$n = a$ the log carries $a$'s entry twice and the lookup returns the
+first --- whose value is the very one the second entry holds --- so the
+second column's law collapses to the first's, and both sides of
+Theorem~\ref{thm:randjoint} become the diagonal law of $P_a$. The
+case analysis costs two lines, which is cheaper than carrying a
+hypothesis that would have to be explained wherever the theorem is
+applied.
+\end{remark}
+
+\subsection{The chain to the data}
+\label{sec:genemp}
+
+The concentration results of \S\ref{sec:empcond} and \S\ref{sec:unifcond}
+are already stated for arbitrary events, so once
+Corollary~\ref{cor:randcond} names the target there is no probability left
+to do.
+
+\begin{theorem}[What a trial reports, in any model]
+\label{thm:randemp}
+Fix $x$ with $P_a(x) > 0$. For every $\varepsilon > 0$ and $\delta > 0$
+there is an $N_0$ such that for all $N \ge N_0$, with probability at least
+$1 - \delta$, \emph{every} value $y \in \dom_n$ satisfies
+\[
+  \Bigl|\;\emp{A^{n}_y \mid A^{a}_x}_N(s)
+  \;-\; P\bigl(n = y \mid \mathrm{do}(a := x)\bigr)\;\Bigr|
+  \;<\; \varepsilon ,
+\]
+and likewise at any single fixed $y$.
+\end{theorem}
+
+\pfref{thm:randemp}
+
+\begin{remark}[What the declared size no longer costs]
+\label{rem:nosize}
+Theorem~\ref{thm:rct3arm} had to pin the declared size at $1$ and appeal
+to Remark~\ref{rem:twosizes}, because the protocol it quantified over
+mentioned $N$. Here the experiment is a parameter, so its elaboration is
+one fixed term and the events are fixed outright. The bookkeeping was an
+artifact of instantiating a family, not a feature of the statement.
+\end{remark}
 
 \section{What is not proved}
 \label{sec:limits}
@@ -1884,30 +1866,35 @@ Stated plainly, so that the scope of the above is not overread.
   the engine's parent-value list and $\elab$'s keyed reads, \emph{not} any
   property of the coding --- see Remark~\ref{rem:depth2}.
 
-\item[Adequacy (Theorem A).] Theorem~\ref{thm:randdo} is the per-unit
-  core; the distributional lift --- that the compositional population
-  semantics agrees with ``run each unit and push forward'' --- is not yet
-  proved. This is the main outstanding result, and it is what transfers
-  the believability of the small operational semantics to the
+\item[Adequacy (Theorem A), in general.] Theorem~\ref{thm:randdo} is the
+  per-unit core and Lemma~\ref{lem:solverand} lifts it to the typed
+  layer, which is what \S\ref{sec:general} runs on. What is still open is
+  adequacy for \emph{every} protocol: that the compositional population
+  semantics agrees with ``run each unit and push forward'' whatever the
+  operation list, rather than for a single randomization followed by
+  measurements. That remains the result which would transfer the
+  believability of the small operational semantics to the
   reasoning-friendly denotational one.
 
-\item[Identification (Theorem B, distributional).]
-  Theorem~\ref{thm:rct3do} identifies the trial's logged law with an
-  interventional mixture \emph{on one model}, and does it by computing both
-  sides. The general statement --- that the log of a randomized trial
-  identifies $P(R \mid \mathrm{do}(T))$ for every well-formed design --- is
-  not proved, and would go through the distributional lift of
-  Theorem~\ref{thm:randdo} rather than through per-model computation
-  (Remark~\ref{rem:notthebridge}). It needs the coin to have full support
-  (overlap) and to be independent of confounders --- both hold for a
-  randomized trial by construction, and uniformity is \emph{not} required.
+\item[Identification (Theorem B, distributional).] Proved, for one
+  randomized node and two logged columns: Theorem~\ref{thm:randjoint} and
+  Corollary~\ref{cor:randcond} hold for every well-formed acyclic model,
+  with Theorem~\ref{thm:rct3cond} as the checked instance. Overlap is
+  needed for the conditional and nothing else is assumed of the coin ---
+  in particular uniformity is \emph{not} required, and independence from
+  confounders is not a hypothesis but a consequence of the surgery. What
+  remains open is the rest of the design space: several randomized nodes
+  (factorial designs), more than two logged columns (covariates), and any
+  protocol that selects.
 
-\item[The weak law is per-value.] Theorem~\ref{thm:lln} fixes one
-  $v \in \dom_n$, and so do Theorems~\ref{thm:rct2emp},
-  \ref{thm:rct3emp} and \ref{thm:rct3arm}. A statement about the whole
-  distribution needs a union bound, at a cost of a factor $|\dom_n|$.
-  (The event-level form of \S\ref{sec:empcond} removes the \emph{node}
-  indexing but not the single value.)
+\item[The weak law is per-value, except for the conditional estimator.]
+  Theorem~\ref{thm:lln} fixes one $v \in \dom_n$, and so do
+  Theorems~\ref{thm:rct2emp}, \ref{thm:rct3emp} and \ref{thm:rct3arm}. A
+  statement about the whole distribution needs a union bound, at a cost of
+  a factor $|\dom_n|$. That has now been paid for the \emph{conditional}
+  estimator --- Corollary~\ref{cor:empcondfam} and
+  Theorem~\ref{thm:rct3armall} are uniform over the outcome values --- but
+  not for the unconditional ones, which remain per-value.
 
 \item[The variance is left abstract.] $\Var[\Ind{A_v}] = p(1-p) \le 1/4$ is
   not computed, so the bound is stated in terms of a variance rather than
@@ -1948,5 +1935,427 @@ statements. The axiom footprint is exactly the three classical axioms the
 underlying analysis library already assumes --- propositional
 extensionality, dependent functional extensionality, and constructive
 indefinite description --- and the development adds none of its own.
+
+
+\appendix
+\section{Proofs}
+\label{sec:proofs}
+
+Every statement in the body carries a link to its proof here, and every
+proof links back to its statement.
+
+\begin{proofof}{lem:elabcompat}{Lemma}{Elaboration is compatible}
+Every read a mechanism can perform is at a declared parent, whose index
+into $\pa(n)$ is therefore in range; the engine's positional agreement
+hypothesis covers exactly the in-range positions. The ticket discipline of
+$\pv_n$ is what makes this hold by construction rather than by inspection
+of $F$.
+\end{proofof}
+
+\begin{proofof}{lem:ctxmarg}{Lemma}{Marginal of the product}
+Write the indicator $[w_n = v]$ as an extra factor of the product, so that
+the mass at $v$ becomes a single sum over contexts of a product over nodes.
+Exchange the sum and the product using a \emph{dependent} distributivity
+law
+\[
+  \prod_{i} \sum_{j\,:\,J_i} f(i,j)
+  \;=\;
+  \sum_{g \,\in\, \prod_i J_i} \prod_i f(i, g(i)),
+\]
+which is proved by transporting the dependent function space into the
+tagged sum $\{i\,\&\,J_i\}$, where the standard non-dependent
+distributivity applies. Then every factor except the one at $n$ sums to
+$1$, and the factor at $n$ retains the indicator.
+\end{proofof}
+
+\begin{proofof}{lem:pairmarg}{Lemma}{Joint marginal at two distinct nodes}
+As for Lemma~\ref{lem:ctxmarg}, but with \emph{two} indicators inserted as
+extra factors, one at $x$ and one at $y$. Exchanging sum and product by the
+same dependent distributivity law isolates the factors at $x$ and $y$, each
+of which retains its indicator and evaluates to $P_x(v_1)$ resp.\
+$P_y(v_2)$, while every other factor sums to $1$. Distinctness of $x$ and
+$y$ is what keeps the two isolated factors from colliding.
+\end{proofof}
+
+\begin{proofof}{lem:uncurry}{Lemma}{A product pushforward is a mixture}
+Evaluate both sides at $c$. The left side is a sum over pairs
+$(a,b)$ with $F(a,b) = c$ of $\mu(a)\nu(b)$; re-indexing the sum over
+$A \times B$ as an iterated sum over $A$ and then $B$, and pulling the
+factor $\mu(a)$ out of the inner sum, gives the right side.
+\end{proofof}
+
+\begin{proofof}{lem:tworoutes}{Lemma}{Two routes to the node law}
+Both sides are pushforwards of $P_\Ctx$; compose the two maps on the left
+and observe the composite is pointwise equal to
+$\lambda w.\,\solve_F(w)(n)$, then use that pushforward respects pointwise
+equality of maps.
+\end{proofof}
+
+\begin{proofof}{lem:empmap}{Lemma}{Tabulating commutes with mapping}
+Both sides are pushforwards of the uniform law on indices;
+$\lambda i.\,f(s_i)$ is the composite of $f$ with $\lambda i.\,s_i$, so
+functoriality of the pushforward gives the claim.
+\end{proofof}
+
+\begin{proofof}{lem:grid}{Lemma}{The empirical distribution lives on a grid}
+Take $k = \#\{i : s_i = v\}$ and apply the counting form above; $k \le N+1$
+because a subset of the index type has at most as many elements as the
+index type.
+\end{proofof}
+
+\begin{proofof}{thm:solvesource}{Theorem}{Parent-free nodes solve to what their mechanism says}
+By the engine's existence theorem, under well-formedness, acyclicity and a
+complete exogenous assignment, $\fv$ computes $n$'s value from its own
+slot and its parents' values. At $n$ the parent list is empty, and reading
+$n$'s slot out of the coded context returns exactly $\enc_n(w_n)$ (the
+read-after-write property of the coding bridge, which holds because node
+identifiers are distinct). Unfolding $\elab$ at $n$ gives
+\[
+  \enc_n\bigl(F_n(\dect_n(\enc_n(w_n)),\,\cdot\,)\bigr)
+  = \enc_n\bigl(F_n(w_n, \cdot)\bigr)
+  = \enc_n(g(w_n)),
+\]
+using $\dect_n \circ \enc_n = \id$ and then the hypothesis on $F_n$.
+Finally $\solve$ applies $\dect_n$ to this, and $\dect_n\circ\enc_n = \id$
+again.
+\end{proofof}
+
+\begin{proofof}{thm:law}{Theorem}{Law of the logged value}
+Because the protocol consists of the single operation
+$\mathsf{Measure}(n)$, the log has one entry, keyed by $n$, and reading it
+back gives $\solve_F(w)(n)$; hence
+$\logv(e,w,n) = \solve_F(w)(n) = g(w_n)$ by
+Theorem~\ref{thm:solvesource}. So
+\[
+  \mathsf{fdist\_log}(e,n)
+  = \push{(\lambda w.\,g(w_n))} P_\Ctx
+  = \push{g}\,\push{(\lambda w.\,w_n)} P_\Ctx
+  = \push{g}\, P_n,
+\]
+by functoriality of the pushforward and then Lemma~\ref{lem:ctxmarg}.
+\end{proofof}
+
+\begin{proofof}{cor:helloworld}{Corollary}{``Hello world'': a pure echo logs the noise law}
+The case $g = \id$ of Theorem~\ref{thm:law}, with
+$\push{\id}\mu = \mu$.
+\end{proofof}
+
+\begin{proofof}{thm:exact}{Theorem}{Exact-sample law}
+The column is $\langle \logv(e,s_i,n)\rangle_i$, so by
+Lemma~\ref{lem:empmap}
+\[
+  \emp{\mathsf{col}(e,n,s)}
+  = \push{(\lambda w.\,\logv(e,w,n))}\,\emp{s}
+  = \push{(\lambda w.\,\logv(e,w,n))}\,P_\Ctx,
+\]
+using representativeness, and the right-hand side is
+$\mathsf{fdist\_log}(e,n) = \push{g}P_n$ by Theorem~\ref{thm:law}.
+\end{proofof}
+
+\begin{proofof}{lem:eind}{Lemma}{The indicator's mean is the outcome law}
+The mean of an indicator is the probability of its event, and
+$P_\Ctx(A_v)$ is by definition the mass that
+$\push{(\lambda w.\,\logv(e,w,n))}P_\Ctx = \mathsf{fdist\_log}(e,n)$
+assigns to $v$; apply Theorem~\ref{thm:law}.
+\end{proofof}
+
+\begin{proofof}{lem:bridge}{Lemma}{The empirical frequency is the averaged indicator}
+Both sides count the indices at which $f(s_i) = v$ and divide by $N+1$: the
+left by the counting form of $\emp{\cdot}$, the right by splitting the sum
+on the predicate $f(s_i) = v$, where the complementary part contributes
+zero.
+\end{proofof}
+
+\begin{proofof}{thm:lln}{Theorem}{Weak law for the measured outcome}
+By Lemma~\ref{lem:bridge} the quantity inside the probability is the
+average of $N+1$ independent copies of $\Ind{A_v}$, minus its mean --- the
+mean being $(\push{g}P_n)(v)$ by Lemma~\ref{lem:eind}. Chebyshev's
+inequality applied to that average, whose variance is
+$\Var[\Ind{A_v}]/(N+1)$, gives the bound. Formally this instantiates the
+library's weak law, whose hypotheses are that the summands are i.i.d.\
+copies with common mean and common variance; the sum-decomposition
+obligation is discharged by a generic ``sum of $n$ i.i.d.\ copies of an
+arbitrary random variable'' construction, which the library did not
+provide (it instantiates the relation only for one specific variable in its
+asymptotic-equipartition development).
+\end{proofof}
+
+\begin{proofof}{thm:rctsyncorrect}{Theorem}{A randomized trial is syntactically correct}
+Randomizing $T$ removes $T$'s incoming edges, and the back-door
+mutilation removes its outgoing edges; so in the mutilated graph $T$ has no
+incident edges at all, and $d$-separation from $R$ with an empty
+conditioning set is immediate.
+\end{proofof}
+
+\begin{proofof}{lem:rct2T}{Lemma}{$T$ after randomization}
+$T$ is parentless, so the engine evaluates $f'_T$ on $T$'s own slot and an
+empty parent list. After randomization $f'_T$ \emph{is} ``return the
+noise'', so it hands back the stored code unchanged. No decoding happens at
+all here.
+\end{proofof}
+
+\begin{proofof}{lem:rct2R}{Lemma}{$R$: the induction step}
+By the engine's characterisation, $R$'s value is $f'_R$ applied to $R$'s own
+slot together with the list of its parents' computed values. $R$'s parent
+list is $[T]$, whose single entry is $\enc_T(w_T)$ by
+Lemma~\ref{lem:rct2T}. Unfolding the elaboration at $R$ gives
+\[
+  \enc_R\Bigl(F_R\bigl(\dect_R(\enc_R(w_R)),\;
+     \lambda p.\,\dect_p(\,\cdot\,)\bigr)\Bigr),
+\]
+where the parent lookup resolves $T$'s index in $[T]$ to position $0$ and
+so decodes $\enc_T(w_T)$ to $w_T$. Both decodings --- $R$'s own noise and
+$T$'s parent value --- are instances of $\dect \circ \enc = \id$, so the
+value is $\enc_R(h(w_T, w_R))$.
+\end{proofof}
+
+\begin{proofof}{thm:rct2law}{Theorem}{Law of the logged response}
+The protocol logs one entry, at $R$; reading it back gives
+$\dect_R$ of Lemma~\ref{lem:rct2R}, i.e.\ $h(w_T, w_R)$. The law is then
+the pushforward of $P_\Ctx$ along that map, by definition.
+\end{proofof}
+
+\begin{proofof}{thm:rct2}{Theorem}{Correctness of the trial}
+By Theorem~\ref{thm:rct2law} it suffices to factorise the pushforward. The
+map $w \mapsto h(w_T, w_R)$ is the composite of $w \mapsto (w_T, w_R)$ with
+the uncurried $h$. The first pushes $P_\Ctx$ forward to $P_T \otimes P_R$
+by Lemma~\ref{lem:pairmarg}, since $T \neq R$; and pushing the uncurried
+$h$ through a product law is exactly the mixture, by
+Lemma~\ref{lem:uncurry}.
+\end{proofof}
+
+\begin{proofof}{thm:rct2gen}{Theorem}{Correctness of the $k$-arm trial}
+Verbatim the proofs of Lemmas~\ref{lem:rct2T} and~\ref{lem:rct2R} and of
+Theorems~\ref{thm:rct2law} and~\ref{thm:rct2}, with $\enc_2, \dect_2$
+replaced by the canonical codes and $\textsf{placebo}$ by
+$\mathit{bias}(u)$. Every step that previously appealed to a concrete
+table appeals instead to cancellation, and no step appeals to
+$|A|$ or $|B|$.
+\end{proofof}
+
+\begin{proofof}{lem:eindany}{Lemma}{The indicator's mean is the logged law, unconditionally}
+The mean of an indicator is the probability of its event, and
+$P_\Ctx(A_v)$ is by definition the mass that
+$\push{(\lambda w.\,\logv(e,w,n))}P_\Ctx$ assigns to $v$ --- which is
+$\mathsf{fdist\_log}(e,n)(v)$. Unfolding both sides is the whole proof;
+no hypothesis on $e$, on $n$, or on the graph is required.
+\end{proofof}
+
+\begin{proofof}{thm:llnany}{Theorem}{Experiment-level concentration}
+Verbatim the proof of Theorem~\ref{thm:lln}, with Lemma~\ref{lem:eindany}
+in place of Lemma~\ref{lem:eind}.
+\end{proofof}
+
+\begin{proofof}{thm:rct2emp}{Theorem}{The two-node trial converges in probability}
+The first display is Theorem~\ref{thm:llnany} with its target rewritten by
+Theorem~\ref{thm:rct2gen}. For the second, put
+$C = \Var_{P_\Ctx}[\Ind{A_v}]$ and take
+$N_0 = \lfloor C / (\delta\varepsilon^{2}) \rfloor$; since the reals are
+archimedean, $C/(\delta\varepsilon^{2}) < N_0 + 1 \le N+1$ whenever
+$N \ge N_0$, and rearranging gives
+$C/((N+1)\varepsilon^{2}) \le \delta$. No sign information about $C$ is
+needed, because the archimedean bound $x < \lfloor x \rfloor + 1$ holds
+for every real $x$.
+\end{proofof}
+
+\begin{proofof}{lem:rct3}{Lemma}{}
+$Z$ is a source and echoes its noise, giving $w_Z$. At $X$ the mechanism
+has been replaced by ``return your own slot'', so $X$ takes $w_X$. The
+engine still \emph{builds and passes} $X$'s parent list $[Z]$, and the
+replaced mechanism simply ignores it --- that discarded list is the edge
+$Z \to X$ being severed. At $Y$ the positional list is
+$[\enc_X(w_X), \enc_Z(w_Z)]$, and the keyed reads recover $w_X$ and $w_Z$
+by the cancellation, so $Y$'s value is $h(w_X,w_Z)$.
+\end{proofof}
+
+\begin{proofof}{thm:rct3}{Theorem}{Outcome law of the trial}
+As for Theorem~\ref{thm:rct2}: push Lemma~\ref{lem:rct3} forward, factorise
+the joint at the distinct nodes $X$ and $Z$ by Lemma~\ref{lem:pairmarg},
+and convert the product pushforward into a mixture by
+Lemma~\ref{lem:uncurry}.
+\end{proofof}
+
+\begin{proofof}{lem:obs3}{Lemma}{}
+Now $F_X$ is live, so the chain is three deep: $Z$ echoes $w_Z$; $X$ reads
+$Z$ through its parent list and returns $\beta(w_Z)$; $Y$ reads both and
+returns $h(\beta(w_Z), w_Z)$. Each parent value arrived as $\enc$ of
+something and is recovered by the cancellation, exactly as at depth two.
+\end{proofof}
+
+\begin{proofof}{thm:obs3}{Theorem}{Observational law}
+Push Lemma~\ref{lem:obs3} forward. The resulting map factors through
+$w \mapsto w_Z$, so the single-node marginal Lemma~\ref{lem:ctxmarg}
+replaces $P_\Ctx$ by $P_Z$.
+\end{proofof}
+
+\begin{proofof}{thm:sep3}{Theorem}{Randomizing is not a no-op}
+The only pair with $h(t,a) = \textsf{worse}$ is
+$(\textsf{placebo}, \textsf{old})$. Under Theorem~\ref{thm:rct3} the
+treatment and the age are independent, so that pair has probability
+$P_X(\textsf{placebo}) \cdot P_Z(\textsf{old}) = \tfrac{1}{3}$ at $P_3$.
+Under Theorem~\ref{thm:obs3} the outcome is $\textsf{worse}$ only if
+$\beta(a) = \textsf{placebo}$ and $a = \textsf{old}$; but
+$\beta(\textsf{old}) = \textsf{drug}$, so no age qualifies and the mass is
+$0$. Since $\tfrac13 \neq 0$ the two laws are distinct.
+\end{proofof}
+
+\begin{proofof}{lem:do3}{Lemma}{The surgered solve, per unit}
+Three solves on the surgered graph in topological order, as for
+Lemma~\ref{lem:rct3}. $Z$ is untouched by the surgery and echoes $w_Z$. At
+$X$ the mechanism is gone and so is the parent list --- in
+$\mathrm{do}(X)G_3$ one computes $\pa(X) = \varnothing$ --- so $X$ is the
+constant $\enc_X(t)$. At $Y$ the surgery changed nothing: $\pa(Y) = [X;Z]$
+still, so the positional list is $[\enc_X(t), \enc_Z(w_Z)]$ and the keyed
+reads recover $t$ and $w_Z$ by the cancellation.
+\end{proofof}
+
+\begin{proofof}{thm:do3}{Theorem}{The interventional law at $Y$}
+Push Lemma~\ref{lem:do3} forward and marginalise the context at the single
+node $Z$ by Lemma~\ref{lem:ctxmarg}.
+\end{proofof}
+
+\begin{proofof}{thm:rct3do}{Theorem}{The trial is a mixture of interventional laws}
+Theorem~\ref{thm:rct3} with its mixand rewritten by Theorem~\ref{thm:do3}.
+\end{proofof}
+
+\begin{proofof}{cor:obsnotdo}{Corollary}{Confounding, as an inequation}
+Theorem~\ref{thm:sep3} says the two protocols' laws differ, and
+Theorem~\ref{thm:rct3do} says the trial's law is the right-hand side.
+\end{proofof}
+
+\begin{proofof}{thm:rct3emp}{Theorem}{The confounded trial converges to the interventional mixture}
+Verbatim the proof of Theorem~\ref{thm:rct2emp}, with
+Theorem~\ref{thm:rct3do} naming the target in place of
+Theorem~\ref{thm:rct2gen}. Nothing about the model or the protocol enters
+the probability, by Theorem~\ref{thm:llnany}; the declared size is tied to
+the sample size in the same way, and the variance constant can be named
+once at a fixed declared size because elaboration drops the declared size
+(Remark~\ref{rem:twosizes}).
+\end{proofof}
+
+\begin{proofof}{thm:rct3joint}{Theorem}{The trial's joint law}
+The $X$ column logs $w_X$ and the $Y$ column $h(w_X,w_Z)$, so the joint is
+the pushforward of $P_\Ctx$ along $w \mapsto (w_X, h(w_X,w_Z))$. Factorise
+at the distinct nodes $X,Z$ by Lemma~\ref{lem:pairmarg}, convert to a
+mixture by Lemma~\ref{lem:uncurry}, and rewrite the mixand by
+Theorem~\ref{thm:do3}.
+\end{proofof}
+
+\begin{proofof}{thm:rct3cond}{Theorem}{Conditioning on the arm gives the interventional law}
+By Lemma~\ref{lem:prout} the conditional is
+$\mathsf{fdist\_log}_2(e_{\mathrm{full}},X,Y)(x,y) /
+ \mathsf{fdist\_log}(e_{\mathrm{full}},X)(x)$. The denominator is
+$P_X(x)$, and by Theorem~\ref{thm:rct3joint} the numerator is
+$P_X(x) \cdot \fdo_{X := x}(Y)(y)$; divide.
+\end{proofof}
+
+\begin{proofof}{lem:ratio}{Lemma}{A ratio of two estimates}
+No probability is involved. From $|\hat b - b| \le \delta \le b/2$ we get
+$b/2 \le \hat b$, so the estimated denominator cannot collapse. Over the
+common denominator $\hat b\,b$ the numerator is
+$(\hat a - a)b - a(\hat b - b)$, of absolute value at most
+$\delta b + a\delta \le 2\delta b$ since $a \le b$; divide by
+$\hat b\, b \ge (b/2)\,b$.
+\end{proofof}
+
+\begin{proofof}{thm:empcond}{Theorem}{The conditional estimator converges}
+By Lemma~\ref{lem:ratio}, if both halves are within $\delta'$ of their
+targets then the quotient is within $4\delta'/P_\Ctx(B)$ of
+$\Pr[A \mid B]$. So the event that the quotient is off by $\varepsilon$ is
+\emph{contained} in the union of the two events that a half is off by
+$\delta'$, and monotonicity plus a union bound reduce the claim to two
+instances of the event-level weak law above. Taking
+$\delta' = \min\bigl(P_\Ctx(B)/2,\ \varepsilon P_\Ctx(B)/8\bigr)$ makes
+both side conditions hold --- the first argument keeps the estimated
+denominator away from zero, the second makes the quotient bound beat
+$\varepsilon$ --- and then $N_0$ is chosen archimedean\-ly from the two
+variances, as in Theorem~\ref{thm:rct2emp}.
+\end{proofof}
+
+\begin{proofof}{thm:rct3arm}{Theorem}{What a confounded trial reports, arm by arm}
+Theorem~\ref{thm:empcond} with $A := A_y^{Y}$ and $B := A_x^{X}$, whose
+mass is $P_X(x)$ by Lemma~\ref{lem:prout} and the $X$-column law, and the
+target rewritten by Theorem~\ref{thm:rct3cond}.
+\end{proofof}
+
+\begin{proofof}{thm:empcondfam}{Theorem}{Chebyshev for a family}
+Boole's inequality, then Theorem~\ref{thm:empcond}'s bound at each $i$ ---
+which applies with the \emph{same} $\delta'$, since its side conditions
+mention only $B$ and $\varepsilon$.
+\end{proofof}
+
+\begin{proofof}{thm:rct3armall}{Theorem}{What a confounded trial reports, as a distribution}
+Corollary~\ref{cor:empcondfam} with $I := \dom_Y$, $A_i := A_i^{Y}$,
+$B := A_x^{X}$ and $\theta_y := \fdo_{X := x}(Y)(y)$. The identification
+hypothesis is Theorem~\ref{thm:rct3cond} at each $y$, and the mass of $B$
+is $P_X(x)$ by Lemma~\ref{lem:prout} and the $X$-column law.
+\end{proofof}
+
+\begin{proofof}{lem:solverand}{Lemma}{Randomizing is intervening at the draw}
+$\mathsf{get\_value\_of\_node}$ reads the exogenous assignment in exactly
+one place, and the recursion over the topological order carries it
+unchanged, so $\fv$ agrees on any two assignments that agree pointwise.
+Prepending an entry a list already carries is therefore invisible, because
+the lookup takes the first match. Apply this with the draw
+$\lceil w \rceil_a$ written at the head, and Theorem~\ref{thm:randdo}
+concludes.
+\end{proofof}
+
+\begin{proofof}{lem:solvedooff}{Lemma}{Setting a node kills its draw}
+Induction along the topological order. At every node other than $a$ the
+two assignments agree, so the computed value does. At $a$ they both
+supply a value and the mechanism is the constant, which discards what it
+is handed; the parent list is read from the accumulated values, not from
+the assignment. So the computed value agrees at $a$ as well.
+\end{proofof}
+
+\begin{proofof}{thm:splitoff}{Theorem}{Splitting one coordinate off the exogenous law}
+Compare masses at a cell $(u,v)$. Peeling the factor $P_a(w_a)$ off the
+product form of $P_\Ctx$ writes each side as $P_a(u)$ times a sum over
+contexts: on the left the sum is restricted to $w_a = u$, on the right it
+is free. Partition the free sum by the value of the $a$ slot. Every fibre
+carries the same sum, by reindexing along $w \mapsto w[a := x]$ --- a
+bijection between fibres, with inverse $w \mapsto w[a := u]$ --- and
+because neither the side condition nor the remaining product reads the
+slot. Summing $P_a$ over its own domain gives $1$.
+\end{proofof}
+
+\begin{proofof}{lem:randfst}{Lemma}{The randomized column is the coin}
+A $\mathsf{Measure}$ step leaves the mechanism family alone, so the value
+logged at $a$ is the solve in the randomized model. By
+Lemma~\ref{lem:solverand} that is $\solvedo_{a := w_a}(w)(a)$, which is
+$w_a$: the surgered graph leaves $a$ parentless and its mechanism is the
+constant. Push forward along $w \mapsto w_a$ and apply the one-node
+marginal.
+\end{proofof}
+
+\begin{proofof}{thm:randjoint}{Theorem}{The logged pair factorises, in any model}
+Read the two columns off the runner. Both $\mathsf{Measure}$ steps act in
+the same randomized model, since neither touches the mechanism family, and
+the first-match lookup resolves which entry each column reads (and when
+$n = a$ the two columns coincide). Rewriting each column by
+Lemma~\ref{lem:solverand} makes the logged pair
+$\bigl(w_a,\ \solvedo_{a := w_a}(w)(n)\bigr)$.
+Lemma~\ref{lem:solvedooff} supplies Theorem~\ref{thm:splitoff}'s
+hypothesis for $F_x := \solvedo_{a := x}(\cdot)(n)$, and that theorem
+concludes; the mixand is $\fdo_{a := x}(n)$ by definition.
+\end{proofof}
+
+\begin{proofof}{cor:randcond}{Corollary}{Identification by randomization}
+The ratio form of \S\ref{sec:rct3arm}, with kernel
+$x \mapsto \fdo_{a := x}(n)$. Its two obligations are
+Lemma~\ref{lem:randfst} (the conditioning column's law is $P_a$, so the
+denominator is $P_a(x)$) and Theorem~\ref{thm:randjoint} (the joint
+factorises through that kernel).
+\end{proofof}
+
+\begin{proofof}{thm:randemp}{Theorem}{What a trial reports, in any model}
+Corollary~\ref{cor:randcond} identifies the target, and
+Lemma~\ref{lem:randfst} gives the conditioning event mass $P_a(x)$, which
+is positive by hypothesis. Theorem~\ref{thm:empcond} gives the
+single-value statement and Corollary~\ref{cor:empcondfam} the uniform one;
+both are already stated for arbitrary events, so nothing further is
+needed.
+\end{proofof}
 
 \end{document}

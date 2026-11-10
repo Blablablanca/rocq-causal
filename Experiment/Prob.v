@@ -15,6 +15,9 @@ From CausalDiagrams Require Import Assignments.
 From CausalDiagrams Require Interventions.
 From Semantics Require Import FunctionRepresentation FindValue EquateValues.
 From Experiment Require Main.
+(* Require-only, like [Interventions]: [Correctness] imports Stdlib's list
+   notations.  Only the qualified bridge lemmas are used. *)
+From Experiment Require Correctness.
 
 Set Implicit Arguments.
 Unset Strict Implicit.
@@ -106,6 +109,32 @@ transitivity (\sum_(a : A) \sum_(b : B) (if F a b == c then Pa a * Pb b else 0))
 rewrite /dbind fdistbindE; apply: eq_bigr => a _.
 rewrite /dmap fdistmapE big_distrr /= -big_mkcond /=.
 by apply: eq_bigl => b; rewrite inE.
+Qed.
+
+(* the mass [dmap] puts on a point is the mass of its fibre.  [fdistmapE]
+   says this already, but with the index written [a in A | a \in preim ..],
+   whose predicate will not unify with a plain [\sum_(a | p a)]; this is
+   the form the proofs below need. *)
+Lemma dmapE (g : A -> B) (d : R.-fdist A) (b : B) :
+  dmap g d b = \sum_(x : A | g x == b) d x.
+Proof.
+rewrite /dmap fdistmapE big_mkcond [RHS]big_mkcond /=.
+by apply: eq_bigr => x _; rewrite !inE.
+Qed.
+
+(* the mass a factorised joint puts on one cell: the first component's
+   mass times the mass that component's kernel gives the second *)
+Lemma dbind_pair_cell_gen (d : R.-fdist A) (k : A -> R.-fdist B)
+    (u : A) (v : B) :
+  dbind d (fun a => dmap (fun b => (a, b)) (k a)) (u, v) = d u * k u v.
+Proof.
+rewrite /dbind fdistbindE (bigD1 u) //= big1; last first.
+  move=> i Hiu; rewrite /dmap fdistmapE big_pred0; last first.
+    by move=> b; rewrite !inE xpair_eqE (negbTE Hiu).
+  by rewrite mulr0.
+rewrite addr0 /dmap fdistmapE (eq_bigl (fun a => a == v)); last first.
+  by move=> a; rewrite !inE xpair_eqE eqxx.
+by rewrite big_pred1_eq.
 Qed.
 
 End UncurryProd.
@@ -260,6 +289,19 @@ rewrite inE => /orP[/eqP -> | Hin].
   + exact: (IH Hin).
 Qed.
 
+(* ...and the companion: a key no entry carries reads as [None] *)
+Lemma get_assigned_value_map_none (I : eqType) (key val : I -> nat)
+  (l : list I) (k : nat) :
+  (forall j : I, j \in l -> key j <> k) ->
+  get_assigned_value [seq (key j, val j) | j <- l] k = None.
+Proof.
+elim: l => [|j l IH] H; first by [].
+rewrite /=; case E: (key j =? k).
+- apply Nat.eqb_eq in E.
+  by move: (H j (mem_head _ _) E).
+- apply: IH => i Hi; apply: H; by rewrite inE Hi orbT.
+Qed.
+
 (* --- transparent boolean decision --- *)
 (* a reducible (transparent) bool *)
 Definition bdec (b : bool) : {b} + {~~ b} :=
@@ -400,6 +442,50 @@ Definition context := {dffun forall n : Node, dom n}.
    would genuinely diverge if noise domains were ever split off. *)
 Definition world := {dffun forall n : Node, dom n}.
 
+(* --- overwriting one coordinate of a context ------------------------- *)
+
+(* [upd a x w] is w with a's slot replaced by x.  The dependent cast is
+   unavoidable: the branch taken when [m == a] must deliver a [dom m],
+   and what is in hand is an [x : dom a].  [eqP]'s equality is what
+   transports it, and the four lemmas below are everything that is ever
+   needed of the definition. *)
+Definition upd (a : Node) (x : dom a) (w : context) : context :=
+  [ffun m => if @eqP _ m a is ReflectT E then ecast k (dom k) (esym E) x
+             else w m].
+
+Lemma updE (a : Node) (x : dom a) (w : context) : @upd a x w a = x.
+Proof.
+rewrite /upd ffunE; case: eqP => [E|H]; last by case: (H erefl).
+by rewrite (eq_irrelevance (esym E) (erefl a)).
+Qed.
+
+Lemma updO (a : Node) (x : dom a) (w : context) (m : Node) :
+  m != a -> @upd a x w m = w m.
+Proof.
+move=> Hm; rewrite /upd ffunE; case: eqP => // E.
+by rewrite E eqxx in Hm.
+Qed.
+
+(* a second overwrite at the same slot wins outright *)
+Lemma updK (a : Node) (x y : dom a) (w : context) :
+  @upd a x (@upd a y w) = @upd a x w.
+Proof.
+apply/ffunP => m; case: (altP (m =P a)) => [->|Hm].
+- by rewrite !updE.
+- by rewrite !updO.
+Qed.
+
+(* overwriting changes nothing exactly when the slot already held x *)
+Lemma upd_fix (a : Node) (x : dom a) (w : context) :
+  (@upd a x w == w) = (w a == x).
+Proof.
+apply/eqP/eqP => [H|H].
+- by move: (@updE a x w); rewrite H.
+- apply/ffunP => m; case: (altP (m =P a)) => [->|Hm].
+  + by rewrite updE H.
+  + by rewrite updO.
+Qed.
+
 (* raw nat id -> Node, transparently (None iff the id is not in G) *)
 Definition o_node (p : nat) : option Node :=
   match bdec (p \in nodes_in_graph G) with
@@ -428,6 +514,32 @@ Proof.
 rewrite /to_assign.
 apply: get_assigned_value_map; first by move=> a b; exact: val_inj.
 by rewrite mem_enum.
+Qed.
+
+(* a nat that names no node of G is unassigned: [to_assign] only ever
+   writes keys of the form [ssval i] *)
+Lemma to_assign_get_outside (w : context) (k : node) :
+  k \notin nodes_in_graph G -> get_assigned_value (to_assign w) k = None.
+Proof.
+move=> Hk; rewrite /to_assign.
+apply: get_assigned_value_map_none => j _.
+case: j => u Hu /= E; move: Hk; by rewrite -E Hu.
+Qed.
+
+(* contexts agreeing away from [a] give assignments agreeing away from
+   [ssval a].  Stated over raw nats, since that is what the engine reads:
+   off the graph both sides are [None], on it both are the node's own
+   slot. *)
+Lemma to_assign_agree_off (a : Node) (w w' : context) :
+  (forall m : Node, m != a -> w m = w' m) ->
+  forall k : node, k <> ssval a ->
+    get_assigned_value (to_assign w) k = get_assigned_value (to_assign w') k.
+Proof.
+move=> Hoff k Hk; case Hin: (k \in nodes_in_graph G); last first.
+  by rewrite !to_assign_get_outside // Hin.
+have Hka : (@SeqSub _ (nodes_in_graph G) k Hin) != a.
+  by apply/eqP => E; apply: Hk; rewrite -E.
+by rewrite -[k]/(ssval (@SeqSub _ _ k Hin)) !to_assign_get (Hoff _ Hka).
 Qed.
 
 (* a [Node] is a node of G, in dsep-core's boolean form *)
@@ -654,7 +766,105 @@ rewrite /solve_do /Main.semantic_do /Main.eval.
 by case: (find_value _ _ _ _ _).
 Qed.
 
+(* L2', WHAT [solve_do] DOES NOT READ.  Setting a kills a's draw: the
+   constant mechanism discards both the parents and the noise term, so a's
+   slot is consulted only for its Some/None status.  Every OTHER node
+   still runs on its own noise, which is why this is an agreement-off-[a]
+   statement rather than an independence-of-[w] one.  Until now this was
+   a comment; [Correctness.find_value_U_ext_ignore] makes it a lemma. *)
+Lemma solve_do_off (tF : tgraphfun) (a : Node) (v : dom a)
+    (w w' : context) (n : Node) :
+  (forall m : Node, m != a -> w m = w' m) ->
+  @solve_do tF a v w n = @solve_do tF a v w' n.
+Proof.
+move=> Hoff.
+suff H : find_value (Interventions.do (ssval a) G)
+           (Main.do_graphfun (ssval a) (@enc a v) (elab tF))
+           (ssval n) (to_assign w) nil
+       = find_value (Interventions.do (ssval a) G)
+           (Main.do_graphfun (ssval a) (@enc a v) (elab tF))
+           (ssval n) (to_assign w') nil.
+  by rewrite /solve_do /Main.semantic_do H.
+apply: (@Correctness.find_value_U_ext_ignore _ _ _ _ (ssval a)
+          (@enc a (w a)) (@enc a (w' a))).
+- exact: (to_assign_agree_off Hoff).
+- exact: to_assign_get.
+- exact: to_assign_get.
+- move=> r1 r2 p.
+  by rewrite /Main.do_graphfun Nat.eqb_refl.
+Qed.
+
+(* setting a node to v makes it v -- the one value [solve_do] computes
+   without consulting the mechanisms at all *)
+Lemma solve_do_self (tF : tgraphfun) (a : Node) (v : dom a) (w : context) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  @solve_do tF a v w a = v.
+Proof.
+move=> Hwf Hcyc; rewrite /solve_do.
+rewrite (Correctness.semantic_do_self G (elab tF) (ssval a) (@enc a v)
+           (to_assign w) Hwf Hcyc (node_in_graph_ssval a) (to_assign_complete w)).
+exact: encK.
+Qed.
+
+(* --- randomizing: the same surgery, read as a do --------------------- *)
+
+(* [solve_rand a] runs the model with a's mechanism replaced by "return
+   your own exogenous slot" -- the typed reading of a [Randomize a] step.
+   Unlike [solve_do] it READS a's noise, and that is the whole difference
+   between the two surgeries: the value a takes is the draw the context
+   already carries. *)
+Definition solve_rand (tF : tgraphfun) (a : Node) (w : context) (n : Node)
+  : dom n :=
+  dec n (Main.eval G (Main.randomize_graphfun (ssval a) (elab tF))
+           (ssval n) (to_assign w)).
+
+(* L1, THE TYPED RANDOMIZE/DO BRIDGE.  Randomizing a and solving is
+   intervening on a at the value a's own slot happens to hold.  The
+   per-unit content is [Correctness.randomize_semantic_do], already
+   general in the graph; the only gap was bookkeeping, since that theorem
+   writes the draw at the HEAD of the exogenous list while the typed layer
+   hands over [to_assign w], which already maps a to the same value.
+   [Correctness.find_value_cons_redundant] closes it, and needs no
+   hypothesis: the engine reads the assignment only through
+   [get_assigned_value], which takes the first match. *)
+Lemma solve_randE (tF : tgraphfun) (a : Node) (w : context) (n : Node) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  @solve_rand tF a w n = @solve_do tF a (w a) w n.
+Proof.
+move=> Hwf Hcyc.
+have Hred : find_value G (Main.randomize_graphfun (ssval a) (elab tF))
+              (ssval n) (to_assign w) nil
+            = Main.semantic_do (ssval a) (@enc a (w a)) G (elab tF)
+                (ssval n) (to_assign w).
+  rewrite -(Correctness.find_value_cons_redundant _ _ _ _ _ _ _
+              (to_assign_get w a)).
+  apply: Correctness.randomize_semantic_do.
+  - exact: Hwf.
+  - exact: Hcyc.
+  - exact: node_in_graph_ssval.
+  - exact: to_assign_complete.
+  - exact: node_in_graph_ssval.
+rewrite /solve_rand /solve_do /Main.eval Hred.
+by case: (Main.semantic_do _ _ _ _ _ _).
+Qed.
+
+(* ...so the randomized node logs its own draw *)
+Lemma solve_rand_self (tF : tgraphfun) (a : Node) (w : context) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  @solve_rand tF a w a = w a.
+Proof.
+move=> Hwf Hcyc; rewrite (solve_randE tF a w a Hwf Hcyc).
+exact: (@solve_do_self tF a (w a) w Hwf Hcyc).
+Qed.
+
 End Boundary.
+
+(* [a] appears in [x]'s type, so the auto-implicit rule would hide it. *)
+Arguments upd {G dom} a x w.
+Arguments updE {G dom} a x w.
+Arguments updO {G dom} a x w m.
+Arguments updK {G dom} a x y w.
+Arguments upd_fix {G dom} a x w.
 
 (* [a] appears in [v]'s type, so the auto-implicit rule would hide it;
    both stay explicit, as [solve]'s arguments do. *)
@@ -999,7 +1209,102 @@ rewrite (bigD1 x) //= eqxx (bigD1 y) //= (negbTE Hyx) eqxx.
 by rewrite big1 ?mulr1 // => i /andP[/negbTE -> /negbTE ->].
 Qed.
 
+(* ===================================================================== *)
+(* L2: SPLITTING ONE COORDINATE OFF THE EXOGENOUS LAW                     *)
+(* --------------------------------------------------------------------- *)
+(* [fdist_context_marginal] and [fdist_context_pair] factor the law at
+   finitely many NAMED slots, and both go through by inserting an
+   indicator as an extra factor of the product.  That technique needs the
+   summand to be a product of per-node functions, so it cannot reach a
+   predicate like "this whole context solves to v" -- which is the shape
+   a mechanism produces.
+
+   What works instead is the coordinate overwrite.  A summand that does
+   not read slot [a] takes the same value on every context with a given
+   off-[a] part, so the sums over the fibres of [w |-> w a] all agree, and
+   that is exactly independence of the [a] slot from everything else. *)
+
+(* the fibres of [w |-> w a] carry equal sums, for any summand and any
+   side condition that both ignore slot [a] *)
+Lemma big_context_off (a : Node G) (q : context dom -> bool)
+    (h : context dom -> R) (x y : dom a) :
+  (forall w w' : context dom,
+     (forall m : Node G, m != a -> w m = w' m) -> q w = q w') ->
+  (forall w w' : context dom,
+     (forall m : Node G, m != a -> w m = w' m) -> h w = h w') ->
+  \sum_(w : context dom | (w a == x) && q w) h w
+  = \sum_(w : context dom | (w a == y) && q w) h w.
+Proof.
+move=> Hq Hf.
+rewrite (reindex_onto (upd a x) (upd a y)); last first.
+  move=> w /andP[/eqP Hw _]; rewrite updK.
+  by apply/eqP; rewrite upd_fix Hw.
+apply: eq_big => [w|w _]; last by apply: Hf => m Hm; exact: updO.
+rewrite updE eqxx /= updK upd_fix andbC; congr (_ && _).
+by apply: Hq => m Hm; exact: updO.
+Qed.
+
+(* L2.  The pair (a's slot, anything that does not read it) is drawn by
+   first drawing the slot from [P a] and then running the rest on the
+   untouched law.  No positivity, no well-formedness: this is a statement
+   about the product form of [fdist_context] alone. *)
+Theorem dmap_split_off (a : Node G) (B : finType)
+    (F : dom a -> context dom -> B) :
+  (forall (x : dom a) (w w' : context dom),
+     (forall m : Node G, m != a -> w m = w' m) -> F x w = F x w') ->
+  dmap (fun w : context dom => (w a, F (w a) w)) fdist_context
+  = dbind (P a) (fun x => dmap (fun y => (x, y)) (dmap (F x) fdist_context)).
+Proof.
+move=> HF; apply/fdist_ext => -[u v].
+(* the a-free side condition, and the a-free part of the product *)
+set Q := fun w : context dom => F u w == v.
+have HQ : forall w w' : context dom,
+    (forall m : Node G, m != a -> w m = w' m) -> Q w = Q w'.
+  by move=> w w' H; rewrite /Q (HF u w w' H).
+set R0 := fun w : context dom => \prod_(m : Node G | m != a) P m (w m).
+have HR0 : forall w w' : context dom,
+    (forall m : Node G, m != a -> w m = w' m) -> R0 w = R0 w'.
+  by move=> w w' H; apply: eq_bigr => m Hm; rewrite H.
+have Hsplit : forall w : context dom, fdist_context w = P a (w a) * R0 w.
+  by move=> w; rewrite fdist_contextE /R0 (bigD1 a).
+(* left side: the cell (u,v) is the a-slot mass times an a-restricted sum *)
+have HL : dmap (fun w : context dom => (w a, F (w a) w)) fdist_context (u, v)
+        = P a u * \sum_(w : context dom | (w a == u) && Q w) R0 w.
+  rewrite dmapE.
+  transitivity (\sum_(w : context dom | (w a == u) && Q w) fdist_context w).
+    rewrite big_mkcond [RHS]big_mkcond /=.
+    apply: eq_bigr => w _; rewrite xpair_eqE /Q.
+    case: (altP (w a =P u)) => [Heq|Hne]; last by [].
+    by rewrite Heq.
+  rewrite big_distrr /=.
+  by apply: eq_bigr => w /andP[/eqP Hw _]; rewrite Hsplit Hw.
+(* right side: the same mass times the unrestricted sum *)
+have HR : dbind (P a)
+            (fun x => dmap (fun y => (x, y)) (dmap (F x) fdist_context)) (u, v)
+        = P a u * \sum_(w : context dom | Q w) fdist_context w.
+  by rewrite dbind_pair_cell_gen dmapE.
+rewrite HL HR; congr (_ * _); symmetry.
+(* the two sums agree: partition the free one by the a slot, and every
+   fibre carries the same sum because neither Q nor R0 reads it *)
+transitivity (\sum_(w : context dom | Q w) (P a (w a) * R0 w)).
+  by apply: eq_bigr => w _; exact: Hsplit.
+transitivity (\sum_(x : dom a)
+                \sum_(w : context dom | Q w && (w a == x)) (P a (w a) * R0 w)).
+  by rewrite (partition_big (fun w : context dom => w a) xpredT).
+transitivity (\sum_(x : dom a)
+   (P a x * \sum_(w : context dom | (w a == u) && Q w) R0 w)); last first.
+  by rewrite -big_distrl /= FDist.f1 mul1r.
+apply: eq_bigr => x _.
+transitivity (\sum_(w : context dom | (w a == x) && Q w) (P a x * R0 w)).
+  apply: eq_big.
+  - by move=> w; rewrite andbC.
+  - by move=> w /andP[_ /eqP Hw]; rewrite Hw.
+rewrite -big_distrr /=.
+by rewrite (@big_context_off a Q R0 x u HQ HR0).
+Qed.
+
 End ContextDist.
+
 
 (* ===================================================================== *)
 (* Part 6: the induced law -- distributions over worlds                  *)
