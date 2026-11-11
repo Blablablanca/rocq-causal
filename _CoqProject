@@ -40,8 +40,8 @@ dsep-core/Semantics/EquateValues.v
 dsep-core/Semantics/ChangeOrigUnbAnc.v
 dsep-core/Semantics/SemanticDSepEquiv.v
 Experiment/Main.v
+Experiment/Correctness.v
 Experiment/Prob.v
 Experiment/TypedExp.v
-Experiment/Correctness.v
 Experiment/Rct2.v
 Experiment/Rct3.v

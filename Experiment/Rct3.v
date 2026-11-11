@@ -867,3 +867,123 @@ apply: (@rand_full_emp_cond_converges G3 dom_3 enc_3 dec_3 enc_3K R P
 Qed.
 
 End Rct3FullLaw.
+
+
+(* ===================================================================== *)
+(* A THREE-COLUMN TRIAL: treatment, response, baseline covariate          *)
+(* --------------------------------------------------------------------- *)
+(* [te_rct3_full] logs two columns.  A real trial also records baseline
+   covariates, and in G_3 the baseline covariate IS the confounder z3
+   (age): drawn before treatment, a parent of both X and Y, and the whole
+   reason the OBSERVATIONAL contrast in [Obs3Law] is wrong.  So this
+   protocol logs exactly what a trialist logs, confounder included, and
+   the many-column theorem says the table is still a mixture of
+   do-experiments -- now jointly over both recorded columns.
+
+   What makes this the right instance to check: nothing about z3 is
+   favourable.  It is not a descendant of X, it is a parent of X in the
+   pre-surgery graph, and it is the variable whose presence breaks
+   observational identification.  Logging it changes nothing, because
+   [Randomize] cut X loose from it before any column was read. *)
+
+(* the measured list: response, then baseline covariate *)
+Definition cols_rct3 : 2.-tuple (Node G3) :=
+  in_tuple (y3 :: z3 :: nil).
+
+Definition te_rct3_cov (N : nat) : texperiment dom_3 :=
+  mk_texperiment
+    (Main.label_of Main.G_3)
+    tF_3
+    (@TRandomize G3 dom_3 x3 :: @TMeasure G3 dom_3 x3
+       :: map (@TMeasure G3 dom_3) cols_rct3)
+    N.
+
+Example te_rct3_cov_elaborates (N : nat) :
+  Main.ops (elab_exp enc_3 dec_3 (te_rct3_cov N))
+  = (Main.Randomize 1 :: Main.Measure 1 :: Main.Measure 2
+       :: Main.Measure 3 :: nil)%N.
+Proof. reflexivity. Qed.
+
+Example te_rct3_cov_measures_Z (N : nat) :
+  is_measured (te_rct3_cov N) z3 = true.
+Proof. reflexivity. Qed.
+
+Section Rct3CovLaw.
+Import GRing.Theory.
+Local Open Scope ring_scope.
+Variable R : realType.
+Variable P : forall n : Node G3, R.-fdist (dom_3 n).
+
+(* THE THREE-COLUMN JOINT.  The trial draws the arm from the allocation
+   law and then draws the WHOLE TABLE -- response and covariate together
+   -- from that arm's interventional joint. *)
+Theorem rct3_cov_joint (N : nat) :
+  fdist_log_arm_rec enc_3 dec_3 P
+    (elab_exp enc_3 dec_3 (te_rct3_cov N)) x3 cols_rct3
+  = dbind (P x3) (fun x => dmap (fun y => (x, y))
+                   (fdist_do_rec enc_3 dec_3 P tF_3 x cols_rct3)).
+Proof.
+apply: (@rand_many_joint G3 dom_3 enc_3 dec_3 enc_3K R P
+          (te_rct3_cov N) x3 2 cols_rct3).
+- exact: G3_wf.
+- exact: G3_acyc.
+- by [].
+Qed.
+
+(* ...and in any arm the allocation law fills, conditioning on the
+   recorded treatment gives that interventional joint outright *)
+Corollary rct3_cov_cond (N : nat) (x : dom_3 x3)
+    (y : logrec dom_3 cols_rct3) :
+  P x3 x != 0 ->
+  cPr (fdist_context P)
+      (@record_set G3 dom_3 enc_3 dec_3
+         (elab_exp enc_3 dec_3 (te_rct3_cov N)) 2 cols_rct3 y)
+      (@outcome_set G3 dom_3 enc_3 dec_3
+         (elab_exp enc_3 dec_3 (te_rct3_cov N)) x3 x)
+  = fdist_do_rec enc_3 dec_3 P tF_3 x cols_rct3 y.
+Proof.
+move=> Hpos.
+apply: (@rand_many_cond G3 dom_3 enc_3 dec_3 enc_3K R P
+          (te_rct3_cov N) x3 2 cols_rct3 x y) => //.
+Qed.
+
+(* the Y column on its own is STILL identified, confounder column and all:
+   this is [rct3_full_cond]'s conclusion, recovered from a protocol that
+   also logs z3.  Logging a covariate -- even the confounder -- costs the
+   treatment-effect claim nothing. *)
+Corollary rct3_cov_Y_cond (N : nat) (x : dom_3 x3) (y : dom_3 y3) :
+  P x3 x != 0 ->
+  cPr (fdist_context P)
+      (@outcome_set G3 dom_3 enc_3 dec_3
+         (elab_exp enc_3 dec_3 (te_rct3_cov N)) y3 y)
+      (@outcome_set G3 dom_3 enc_3 dec_3
+         (elab_exp enc_3 dec_3 (te_rct3_cov N)) x3 x)
+  = fdist_do enc_3 dec_3 tF_3 P x3 x y3 y.
+Proof.
+move=> Hpos.
+apply: (@rand_many_cond_col G3 dom_3 enc_3 dec_3 enc_3K R P
+          (te_rct3_cov N) x3 y3 2 cols_rct3 x y) => //.
+Qed.
+
+(* and the whole three-column table converges: with confidence [1 - delta]
+   every cell of arm x's joint (response, covariate) table is within [eps]
+   of its interventional value, simultaneously *)
+Example rct3_cov_emp_converges_all (x : dom_3 x3) (eps delta : R) :
+  0 < eps -> 0 < delta -> 0 < P x3 x ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    Pr (fdist_sample P N.+1)
+       (\bigcup_(y : logrec dom_3 cols_rct3)
+          cond_off P
+            (@record_set G3 dom_3 enc_3 dec_3
+               (elab_exp enc_3 dec_3 (te_rct3_cov 1)) 2 cols_rct3 y)
+            (@outcome_set G3 dom_3 enc_3 dec_3
+               (elab_exp enc_3 dec_3 (te_rct3_cov 1)) x3 x)
+            N (fdist_do_rec enc_3 dec_3 P tF_3 x cols_rct3 y) eps)
+    <= delta.
+Proof.
+move=> Heps Hdelta Hx.
+apply: (@rand_many_emp_cond_converges_all G3 dom_3 enc_3 dec_3 enc_3K R P
+          (te_rct3_cov 1) x3 2 cols_rct3 x eps delta) => //.
+Qed.
+
+End Rct3CovLaw.

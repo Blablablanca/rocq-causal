@@ -765,6 +765,299 @@ apply: (@cPr_outcome_eq (elab_exp enc dec te) a n x y
   by rewrite (@rand_full_fst_law te a n Hwf Hcyc Hops).
 Qed.
 
+(* ===================================================================== *)
+(* MANY COLUMNS: "randomize a, then measure any list of nodes"            *)
+(* --------------------------------------------------------------------- *)
+(* A real trial does not log two columns.  It logs the treatment, the
+   response, and every covariate, mediator and repeated reading the
+   protocol asks for.  This block says that logging them breaks nothing
+   and buys the JOINT: the whole table is drawn by flipping the
+   randomizer's coin and then observing the ENTIRE measured list in a
+   world where the treatment was forced to that value.
+
+   The measured list carries no side conditions.  Its nodes need not be
+   distinct, [a] itself may appear in it, the order is free, and no node
+   need be a descendant of [a].  Duplicates are harmless because the
+   engine's log read is first-match and every occurrence of a node carries
+   the same evaluated value. *)
+
+(* [\in] on a mathcomp seq, as dsep-core's [List.In] *)
+Lemma mem_In (T : eqType) (x : T) (s : list T) : x \in s -> List.In x s.
+Proof.
+elim: s => [|y s IH] //; rewrite inE => /orP[/eqP->|/IH H]; [by left|by right].
+Qed.
+
+(* a measured list elaborates to the raw measures of its nodes' ids.
+   Phrased over [map (elab_op _)] rather than [elab_ops] so it applies
+   both before and after [elab_ops] is unfolded. *)
+Lemma elab_measures (ns : list (Node G)) :
+  map (elab_op enc) (map (@TMeasure G dom) ns)
+  = map Main.Measure (map (fun m : Node G => ssval m) ns).
+Proof. by elim: ns => [|m ns IH] //=; rewrite IH. Qed.
+
+(* THE READING LEMMA.  Under "randomize a, then measure ns", every node of
+   ns logs the value the RANDOMIZED model gives it.  This is the only
+   place the runner is touched; everything after it is distribution
+   algebra.  [Correctness.log_run_measures] carries the per-unit content:
+   a [Measure] step leaves [cur_fun] alone, so a whole run of measures
+   evaluates against the one randomized mechanism family, and first-match
+   hands each node its own entry. *)
+Lemma log_val_randomized (te : texperiment dom) (a n : Node G)
+    (ns : list (Node G)) (w : context dom) :
+  te_ops te = @TRandomize G dom a :: map (@TMeasure G dom) ns ->
+  n \in ns ->
+  log_val (elab_exp enc dec te) w n = solve_rand enc dec (te_mech te) a w n.
+Proof.
+move=> Hops Hn.
+have Hin : List.In (ssval n) (map (fun m : Node G => ssval m) ns).
+  by apply: List.in_map; apply: mem_In; exact: Hn.
+rewrite /log_val /elab_exp /elab_ops Hops /= elab_measures.
+rewrite (Correctness.log_run_measures _ _ _ _ _ Hin).
+by rewrite /solve_rand.
+Qed.
+
+(* --- the table a unit produces ----------------------------------------
+   One cell per measured POSITION, so the type is a dependent ffun over
+   ['I_k] -- exactly as [context] is one over [Node G].  Indexing by
+   position rather than by node is what lets the measured list repeat a
+   node and still have a well-typed table.  Being a dependent ffun over a
+   finType it is a finType, which is what [dmap_split_off] needs of its
+   target. *)
+Definition logrec (k : nat) (ms : k.-tuple (Node G)) : finType :=
+  {dffun forall i : 'I_k, dom (tnth ms i)}.
+
+(* the table unit [w] produces under [e] *)
+Definition log_rec (e : Main.experiment) (k : nat) (ms : k.-tuple (Node G))
+    (w : context dom) : logrec ms :=
+  [ffun i => log_val e w (tnth ms i)].
+
+(* the joint law of the arm column and the whole table *)
+Definition fdist_log_arm_rec (e : Main.experiment) (a : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) : R.-fdist (dom a * logrec ms)%type :=
+  dmap (fun w : context dom => (log_val e w a, log_rec e ms w))
+       (fdist_context P).
+
+(* the INTERVENTIONAL joint law of the measured list at [do(a := x)]:
+   [fdist_do]'s many-node twin, built from the same [solve_do] *)
+Definition fdist_do_rec (tF : tgraphfun dom) (a : Node G) (x : dom a)
+    (k : nat) (ms : k.-tuple (Node G)) : R.-fdist (logrec ms) :=
+  dmap (fun w : context dom =>
+          [ffun i => solve_do enc dec tF a x w (tnth ms i)] : logrec ms)
+       (fdist_context P).
+
+(* THE MANY-COLUMN THEOREM.  The table the protocol logs is drawn by first
+   drawing a's slot from its own law and then drawing the WHOLE table from
+   the interventional joint at that value.  Same three facts as the
+   two-column case -- [solve_randE], [solve_do_off], [dmap_split_off] --
+   and no positivity: this is an identity of laws. *)
+Theorem rand_many_joint (te : texperiment dom) (a : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: map (@TMeasure G dom) ms ->
+  fdist_log_arm_rec (elab_exp enc dec te) a ms
+  = dbind (P a) (fun x => dmap (fun y => (x, y))
+                   (fdist_do_rec (te_mech te) x ms)).
+Proof.
+move=> Hwf Hcyc Hops.
+have HF : forall (x : dom a) (w w' : context dom),
+    (forall m : Node G, m != a -> w m = w' m) ->
+    ([ffun i : 'I_k => solve_do enc dec (te_mech te) a x w (tnth ms i)]
+       : logrec ms)
+    = [ffun i : 'I_k => solve_do enc dec (te_mech te) a x w' (tnth ms i)].
+  move=> x w w' Hoff; apply/ffunP => i; rewrite !ffunE.
+  exact: (solve_do_off enc dec (te_mech te) x (tnth ms i) Hoff).
+rewrite /fdist_log_arm_rec.
+transitivity (dmap (fun w : context dom =>
+    (w a, ([ffun i : 'I_k =>
+              solve_do enc dec (te_mech te) a (w a) w (tnth ms i)]
+             : logrec ms))) (fdist_context P)).
+  apply: dmap_eq => w.
+  rewrite (@log_val_randomized te a a (a :: ms) w Hops (mem_head a ms)).
+  rewrite (solve_rand_self encK (te_mech te) a w Hwf Hcyc).
+  congr (_, _); apply/ffunP => i; rewrite /log_rec !ffunE.
+  rewrite (@log_val_randomized te a (tnth ms i) (a :: ms) w Hops);
+    last by rewrite inE mem_tnth orbT.
+  by rewrite (solve_randE enc dec (te_mech te) a w (tnth ms i) Hwf Hcyc).
+rewrite /fdist_do_rec.
+by rewrite (@dmap_split_off G dom R P a (logrec ms)
+   (fun x w => [ffun i : 'I_k =>
+                  solve_do enc dec (te_mech te) a x w (tnth ms i)]) HF).
+Qed.
+
+(* --- generic observables ----------------------------------------------
+   [outcome_set] and [cPr_outcome_eq] are phrased for ONE node's column.
+   The algebra they package never looks at what the column is, only that
+   it is something computed from a unit, and the many-column table is
+   another such thing.  So the generic form below is what makes the table
+   reachable at all; the column versions are its instances. *)
+
+Definition obs_set (B : finType) (f : context dom -> B) (u : B)
+  : {set context dom} := [set w : context dom | f w == u].
+
+Lemma obs_set_outcome (e : Main.experiment) (n : Node G) (v : dom n) :
+  obs_set (fun w : context dom => log_val e w n) v = @outcome_set e n v.
+Proof. by apply/setP => w; rewrite !inE. Qed.
+
+Lemma Pr_obs (B : finType) (f : context dom -> B) (u : B) :
+  Pr (fdist_context P) (@obs_set B f u) = dmap f (fdist_context P) u.
+Proof.
+rewrite /Pr /dmap fdistmapE.
+by apply: eq_bigl => w; rewrite !inE.
+Qed.
+
+Lemma Pr_obs_pair (B C : finType) (f : context dom -> B) (g : context dom -> C)
+    (u : B) (v : C) :
+  Pr (fdist_context P) (@obs_set B f u :&: @obs_set C g v)
+  = dmap (fun w : context dom => (f w, g w)) (fdist_context P) (u, v).
+Proof.
+rewrite /Pr /dmap fdistmapE.
+by apply: eq_bigl => w; rewrite !inE xpair_eqE.
+Qed.
+
+Lemma cPr_obsE (B C : finType) (f : context dom -> B) (g : context dom -> C)
+    (u : B) (v : C) :
+  cPr (fdist_context P) (@obs_set C g v) (@obs_set B f u)
+  = dmap (fun w : context dom => (f w, g w)) (fdist_context P) (u, v)
+    / dmap f (fdist_context P) u.
+Proof. by rewrite /cPr setIC Pr_obs_pair Pr_obs. Qed.
+
+(* the generic per-arm factorisation: a joint that draws [f] and then
+   draws [g] from a kernel has that kernel as its conditional.  The
+   division is the only place positivity is used. *)
+Lemma cPr_obs_eq (B C : finType) (f : context dom -> B) (g : context dom -> C)
+    (u : B) (v : C) (k : B -> R.-fdist C) :
+  dmap f (fdist_context P) u != 0 ->
+  dmap (fun w : context dom => (f w, g w)) (fdist_context P)
+  = dbind (dmap f (fdist_context P)) (fun b => dmap (fun c => (b, c)) (k b)) ->
+  cPr (fdist_context P) (@obs_set C g v) (@obs_set B f u) = k u v.
+Proof.
+move=> Hpos Hjoint; rewrite cPr_obsE Hjoint dbind_pair_cell_gen.
+by rewrite mulrAC (divff Hpos) mul1r.
+Qed.
+
+(* --- identification, many columns ------------------------------------- *)
+
+(* the event "this unit's whole table is y" *)
+Definition record_set (e : Main.experiment) (k : nat) (ms : k.-tuple (Node G))
+    (y : logrec ms) : {set context dom} := obs_set (log_rec e ms) y.
+
+(* the arm column is still the coin, however many columns follow it *)
+Lemma rand_many_fst_law (te : texperiment dom) (a : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: map (@TMeasure G dom) ms ->
+  fdist_log_val (elab_exp enc dec te) a = P a.
+Proof.
+move=> Hwf Hcyc Hops; rewrite /fdist_log_val.
+rewrite -(fdist_context_marginal P a); apply: dmap_eq => w.
+rewrite (@log_val_randomized te a a (a :: ms) w Hops (mem_head a ms)).
+exact: (solve_rand_self encK (te_mech te) a w Hwf Hcyc).
+Qed.
+
+(* ...so in any arm the coin actually fills, conditioning on the recorded
+   treatment gives the INTERVENTIONAL JOINT over everything measured.
+   Not one outcome marginal at a time: the whole table at once, which is
+   what licenses any quantity computed from it. *)
+Corollary rand_many_cond (te : texperiment dom) (a : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) (x : dom a) (y : logrec ms) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: map (@TMeasure G dom) ms ->
+  P a x != 0 ->
+  cPr (fdist_context P) (@record_set (elab_exp enc dec te) k ms y)
+                        (@outcome_set (elab_exp enc dec te) a x)
+  = fdist_do_rec (te_mech te) x ms y.
+Proof.
+move=> Hwf Hcyc Hops Hpos.
+rewrite /record_set -obs_set_outcome.
+apply: (@cPr_obs_eq (dom a) (logrec ms)
+          (fun w : context dom => log_val (elab_exp enc dec te) w a)
+          (log_rec (elab_exp enc dec te) ms) x y
+          (fun z => fdist_do_rec (te_mech te) z ms)).
+- by rewrite -/(fdist_log_val _ a) (@rand_many_fst_law te a k ms Hwf Hcyc Hops).
+- rewrite -/(fdist_log_arm_rec _ a ms)
+          (@rand_many_joint te a k ms Hwf Hcyc Hops).
+  by rewrite -/(fdist_log_val _ a) (@rand_many_fst_law te a k ms Hwf Hcyc Hops).
+Qed.
+
+(* --- one column at a time: adding columns cannot break identification --
+   The many-column protocol still factorises against ANY ONE of its
+   columns.  That is the precise sense in which logging covariates is
+   free: the two-column conclusion is unchanged by the extra columns
+   standing next to it.  Same proof as the two-column case, with
+   [log_val_randomized] in place of the two hand-rolled reads -- which is
+   why [rand_full_joint] is now an instance (checked just below). *)
+Theorem rand_many_pair (te : texperiment dom) (a n : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: map (@TMeasure G dom) ms ->
+  n \in a :: ms ->
+  fdist_log_pair (elab_exp enc dec te) a n
+  = dbind (P a) (fun x => dmap (fun y => (x, y))
+                   (fdist_do enc dec (te_mech te) P a x n)).
+Proof.
+move=> Hwf Hcyc Hops Hn.
+have HF : forall (x : dom a) (w w' : context dom),
+    (forall m : Node G, m != a -> w m = w' m) ->
+    solve_do enc dec (te_mech te) a x w n
+    = solve_do enc dec (te_mech te) a x w' n.
+  by move=> x w w' Hoff; exact: (solve_do_off enc dec (te_mech te) x n Hoff).
+rewrite /fdist_log_pair.
+transitivity (dmap (fun w : context dom =>
+    (w a, solve_do enc dec (te_mech te) a (w a) w n)) (fdist_context P)).
+  apply: dmap_eq => w.
+  rewrite (@log_val_randomized te a a (a :: ms) w Hops (mem_head a ms)).
+  rewrite (@log_val_randomized te a n (a :: ms) w Hops Hn).
+  rewrite (solve_rand_self encK (te_mech te) a w Hwf Hcyc).
+  by rewrite (solve_randE enc dec (te_mech te) a w n Hwf Hcyc).
+by rewrite (@dmap_split_off G dom R P a (dom n)
+              (fun x w => solve_do enc dec (te_mech te) a x w n) HF).
+Qed.
+
+(* ...so every single column of the table, read on its own, still gives
+   the interventional MARGINAL inside each arm *)
+Corollary rand_many_cond_col (te : texperiment dom) (a n : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) (x : dom a) (v : dom n) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: map (@TMeasure G dom) ms ->
+  n \in a :: ms -> P a x != 0 ->
+  cPr (fdist_context P)
+      (@outcome_set (elab_exp enc dec te) n v)
+      (@outcome_set (elab_exp enc dec te) a x)
+  = fdist_do enc dec (te_mech te) P a x n v.
+Proof.
+move=> Hwf Hcyc Hops Hn Hpos.
+apply: (@cPr_outcome_eq (elab_exp enc dec te) a n x v
+          (fun z => fdist_do enc dec (te_mech te) P a z n)).
+- by rewrite (@rand_many_fst_law te a k ms Hwf Hcyc Hops).
+- rewrite (@rand_many_pair te a n k ms Hwf Hcyc Hops Hn).
+  by rewrite (@rand_many_fst_law te a k ms Hwf Hcyc Hops).
+Qed.
+
+(* SUBSUMPTION.  [rand_full_joint]'s statement, re-derived from the
+   many-column theorem at the one-element list.  Nothing was deleted --
+   the two-column proof stays on record -- but this says the general
+   result really does cover it, rather than merely resembling it. *)
+Example rand_full_joint_is_many (te : texperiment dom) (a n : Node G) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: @TMeasure G dom n :: nil ->
+  fdist_log_pair (elab_exp enc dec te) a n
+  = dbind (P a) (fun x => dmap (fun y => (x, y))
+                   (fdist_do enc dec (te_mech te) P a x n)).
+Proof.
+move=> Hwf Hcyc Hops.
+apply: (@rand_many_pair te a n _ (in_tuple (n :: nil))).
+- exact: Hwf.
+- exact: Hcyc.
+- exact: Hops.
+- by rewrite inE mem_head orbT.
+Qed.
+
 
 (* ===================================================================== *)
 (* CONCENTRATION FOR AN ARBITRARY EVENT ABOUT A UNIT                      *)
@@ -1144,6 +1437,35 @@ apply: emp_cond_converges_fam => //.
   by rewrite HB.
 move=> y.
 exact: (esym (@rand_full_cond te a n x y Hwf Hcyc Hops (lt0r_neq0 Hx))).
+Qed.
+
+(* ...and the many-column version: with confidence [1 - delta], EVERY
+   cell of arm x's whole reported table -- one cell per joint record of
+   the measured list, not one per outcome value -- is within [eps] of its
+   interventional value, simultaneously.  The union bound costs nothing
+   extra here because [emp_cond_bound_fam]'s Chebyshev slack depends only
+   on the conditioning arm and [eps], never on which cell. *)
+Theorem rand_many_emp_cond_converges_all (te : texperiment dom) (a : Node G)
+    (k : nat) (ms : k.-tuple (Node G)) (x : dom a) (eps delta : R) :
+  G_well_formed G = true -> contains_cycle G = false ->
+  te_ops te = @TRandomize G dom a :: @TMeasure G dom a
+                :: map (@TMeasure G dom) ms ->
+  0 < eps -> 0 < delta -> 0 < P a x ->
+  exists N0 : nat, forall N : nat, (N0 <= N)%N ->
+    Pr (fdist_sample N.+1)
+       (\bigcup_(y : logrec ms)
+          @cond_off (@record_set (elab_exp enc dec te) k ms y)
+                    (@outcome_set (elab_exp enc dec te) a x)
+                    N (fdist_do_rec (te_mech te) x ms y) eps)
+    <= delta.
+Proof.
+move=> Hwf Hcyc Hops Heps Hdelta Hx.
+have HB : Pr (fdist_context P) (@outcome_set (elab_exp enc dec te) a x) = P a x.
+  by rewrite Pr_outcome (@rand_many_fst_law te a k ms Hwf Hcyc Hops).
+apply: emp_cond_converges_fam => //.
+  by rewrite HB.
+move=> y.
+exact: (esym (@rand_many_cond te a k ms x y Hwf Hcyc Hops (lt0r_neq0 Hx))).
 Qed.
 
 

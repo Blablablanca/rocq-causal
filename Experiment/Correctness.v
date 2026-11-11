@@ -586,3 +586,55 @@ Proof.
   intros [V E] g n v U Hwf Hcyc Hn HU. unfold semantic_do.
   simpl in Hn, HU. apply do_value_at_n; assumption.
 Qed.
+
+(* =====================================================================
+   Reading a MANY-COLUMN log
+
+   A [Measure] step leaves [cur_fun] alone and only appends to the log, so
+   a whole run of [Measure]s evaluates every node against the SAME
+   mechanism family and the log it builds is just the list of those
+   values, in program order.  That is [run_measures_log].  Composed with
+   dsep-core's first-match append lemmas it says what an experimenter's
+   table contains, for a measured list of any length.
+   ===================================================================== *)
+
+Lemma run_measures_log : forall (G0 : graph) (U : raw_context) (gf : @graphfun nat)
+    (L : assignments nat) (ms : nodes),
+  log (run_unit_total G0 U (mk_unit_state gf L) (map Measure ms))
+  = L ++ map (fun m => (m, eval G0 gf m U)) ms.
+Proof.
+  intros G0 U gf L ms. revert L. induction ms as [| m ms IH]; intros L.
+  - simpl. rewrite app_nil_r. reflexivity.
+  - simpl. rewrite (IH (L ++ [(m, eval G0 gf m U)])).
+    rewrite <- app_assoc. reflexivity.
+Qed.
+
+(* first-match on that log: a node the protocol measured reads back its own
+   evaluated value.  Duplicates are harmless -- every occurrence of [n]
+   carries the same value, so returning the first returns that value. *)
+Lemma get_assigned_value_measures : forall (G0 : graph) (gf : @graphfun nat)
+    (U : raw_context) (ms : nodes) (n : node),
+  In n ms ->
+  get_assigned_value (map (fun m => (m, eval G0 gf m U)) ms) n
+  = Some (eval G0 gf n U).
+Proof.
+  intros G0 gf U ms n. induction ms as [| m ms IH]; intros Hin.
+  - destruct Hin.
+  - simpl. destruct (m =? n) eqn:Hmn.
+    + apply Nat.eqb_eq in Hmn. rewrite Hmn. reflexivity.
+    + apply IH. destruct Hin as [Hme | Hin]; [| exact Hin].
+      rewrite Hme in Hmn. rewrite Nat.eqb_refl in Hmn. discriminate Hmn.
+Qed.
+
+(* the two combined, in the shape the typed layer needs: an empty initial
+   log, so the whole table is the measured list's values *)
+Corollary log_run_measures : forall (G0 : graph) (U : raw_context)
+    (gf : @graphfun nat) (ms : nodes) (n : node),
+  In n ms ->
+  get_assigned_value
+    (log (run_unit_total G0 U (mk_unit_state gf nil) (map Measure ms))) n
+  = Some (eval G0 gf n U).
+Proof.
+  intros G0 U gf ms n Hin. rewrite run_measures_log. simpl.
+  apply get_assigned_value_measures. exact Hin.
+Qed.

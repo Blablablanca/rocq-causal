@@ -60,7 +60,7 @@
 \large A formalised denotational and operational semantics, with
 static design-checking as an application}
 \author{}
-\date{8 November 2026 --- state of the Rocq development}
+\date{11 November 2026 --- state of the Rocq development}
 
 \begin{document}
 \maketitle
@@ -1685,6 +1685,11 @@ value it reports. They need not be distinct. The protocol is
   e_{\mathrm{full}} \;=\;
   \bigl[\;\mathsf{Randomize}(a),\ \mathsf{Measure}(a),\ \mathsf{Measure}(n)\;\bigr].
 \]
+Two columns is the smallest protocol that can say anything about
+identification, and it is where the argument is easiest to read, so it
+comes first. \S\ref{sec:gencols} then replaces $n$ by a list of measured
+nodes of any length --- which is what a trial actually logs --- and
+Theorem~\ref{thm:randjoint} becomes an instance of what it proves.
 
 \subsection{Three ingredients}
 \label{sec:genparts}
@@ -1850,6 +1855,177 @@ one fixed term and the events are fixed outright. The bookkeeping was an
 artifact of instantiating a family, not a feature of the statement.
 \end{remark}
 
+\subsection{Any number of columns}
+\label{sec:gencols}
+
+A trial does not log two columns. It logs the treatment, the response,
+and every covariate, mediator and repeated reading the protocol asks for.
+So fix, besides the randomized node $a$, a \emph{list} of measured nodes
+$\vec m = (m_1,\dots,m_k)$ and the protocol
+\[
+  e_{\vec m} \;=\;
+  \bigl[\;\mathsf{Randomize}(a),\ \mathsf{Measure}(a),\
+    \mathsf{Measure}(m_1),\ \dots,\ \mathsf{Measure}(m_k)\;\bigr].
+\]
+The list carries no side conditions. Its nodes need not be distinct, $a$
+itself may appear in it, the order is free, and no $m_i$ need be a
+descendant of $a$.
+
+One run of $e_{\vec m}$ on a unit $w$ produces a \emph{table}
+\[
+  \mathsf{log\_rec}(w) \;=\;
+  \bigl(\,\mathsf{log}(w)(m_1),\ \dots,\ \mathsf{log}(w)(m_k)\,\bigr)
+  \;\in\; \dom_{\vec m} \;:=\; \textstyle\prod_{i<k}\dom_{m_i} ,
+\]
+a dependent function on \emph{positions}, not on nodes. That is what lets
+$\vec m$ repeat a node: two columns reading the same node are two
+columns, and would collapse into one under a node-indexed table.
+$\dom_{\vec m}$ is a dependent function space over a finite index, exactly
+as $\Ctx$ is, so it is finite and may index a distribution --- which is
+the only property of it the proofs use.
+
+Alongside it sits the interventional law of the whole list,
+\[
+  \fdo_{a := x}(\vec m) \;:=\;
+  \push{\bigl(\lambda w.\,(\solvedo_{a := x}(w)(m_i))_{i<k}\bigr)}\ P_\Ctx ,
+\]
+which is $\fdo$'s many-node twin, built from the same $\solvedo$.
+
+Everything rests on one lemma about the runner, and it is the only place
+in this section where the operational semantics is touched at all.
+
+\begin{lemma}[Every measured node logs the randomized solve]
+\label{lem:logrand}
+Let the protocol be $\mathsf{Randomize}(a)$ followed by
+$\mathsf{Measure}(m)$ for each $m$ in a list $\vec n$. Then for every
+context $w$ and every $m \in \vec n$,
+\[
+  \mathsf{log}(w)(m) \;=\; \solve^{\mathrm{rand}}_a(w)(m) .
+\]
+\end{lemma}
+
+\pfref{lem:logrand}
+
+The membership hypothesis is not decoration. $\mathsf{log\_val}$ reads an
+absent log entry through $\mathsf{odflt}\ 0$, so a node the protocol never
+measured would be answered with $\mathsf{dec}\ 0$ --- data that looks real
+and is not. Refusing a column the protocol did not produce is the one
+thing this lemma has to do that the two-column reads did not.
+
+\begin{theorem}[The whole table factorises, in any model]
+\label{thm:randmanyjoint}
+\[
+  \push{\bigl(\lambda w.\,(\mathsf{log}(w)(a),\ \mathsf{log\_rec}(w))\bigr)}\ P_\Ctx
+  \;=\;
+  \int_{x \sim P_a} \push{(\lambda y.\,(x,y))}\ \fdo_{a := x}(\vec m) .
+\]
+\end{theorem}
+
+\pfref{thm:randmanyjoint}
+
+\begin{corollary}[Identification of the whole table]
+\label{cor:randmanycond}
+If $P_a(x) \neq 0$ then for every table $y \in \dom_{\vec m}$,
+\[
+  \Pr\bigl[\,\mathsf{log\_rec} = y \;\big|\; A^{a}_x\,\bigr]
+  \;=\; \fdo_{a := x}(\vec m)(y)
+  \;=\; P\bigl(\vec m = y \mid \mathrm{do}(a := x)\bigr).
+\]
+\end{corollary}
+
+\pfref{cor:randmanycond}
+
+This is stronger than Corollary~\ref{cor:randcond} in the way that
+matters for use. Within each arm it is the interventional \emph{joint}
+over everything measured, so any quantity a trialist later computes from
+the table --- a subgroup contrast, a mediation table, one joint cell ---
+is computed against the interventional law, and not merely each column's
+marginal against its own.
+
+Read in the other direction, the theorem says the extra columns cost
+nothing. That deserves its own statement, because it is the claim one
+needs before agreeing to record a covariate at all.
+
+\begin{theorem}[Any single column still factorises]
+\label{thm:randmanypair}
+For every $n$ in the list $a,m_1,\dots,m_k$,
+\[
+  \mathsf{fdist\_log}_2(e_{\vec m}, a, n)
+  \;=\;
+  \int_{x \sim P_a} \push{(\lambda y.\,(x,y))}\ \fdo_{a := x}(n) .
+\]
+\end{theorem}
+
+\pfref{thm:randmanypair}
+
+\begin{corollary}[Adding columns cannot break identification]
+\label{cor:randmanycol}
+If $P_a(x) \neq 0$ and $n$ is in the list $a,m_1,\dots,m_k$, then
+$\Pr\bigl[A^{n}_y \mid A^{a}_x\bigr]
+ = P\bigl(n = y \mid \mathrm{do}(a := x)\bigr)$.
+\end{corollary}
+
+\pfref{cor:randmanycol}
+
+Theorem~\ref{thm:randjoint} is the instance of
+Theorem~\ref{thm:randmanypair} at the one-element list $\vec m = (n)$, and
+the formalisation derives it that way as a check. Its original proof is
+kept rather than deleted: it reads the two columns by hand, which is what
+made the pattern visible in the first place.
+
+\begin{theorem}[What a many-column trial reports]
+\label{thm:randmanyemp}
+Fix $x$ with $P_a(x) > 0$. For every $\varepsilon > 0$ and $\delta > 0$
+there is an $N_0$ such that for all $N \ge N_0$, with probability at least
+$1 - \delta$, \emph{every} table $y \in \dom_{\vec m}$ satisfies
+\[
+  \Bigl|\;\emp{\mathsf{log\_rec} = y \mid A^{a}_x}_N(s)
+  \;-\; P\bigl(\vec m = y \mid \mathrm{do}(a := x)\bigr)\;\Bigr|
+  \;<\; \varepsilon .
+\]
+\end{theorem}
+
+\pfref{thm:randmanyemp}
+
+\begin{remark}[The union bound needed no new work]
+\label{rem:unifcols}
+The family here is indexed by $\dom_{\vec m}$, which is exponentially
+larger than the $\dom_n$ of Theorem~\ref{thm:randemp}. Nothing in
+\S\ref{sec:unifcond} notices. Theorem~\ref{thm:empcondfam}'s Chebyshev
+slack depends only on the conditioning arm and $\varepsilon$, never on
+which member of the family, so one $N_0$ serves the whole table. The size
+of the family appears only in the rate, through the factor the union bound
+contributes --- which is the honest cost of reporting a joint table rather
+than an artifact of the proof.
+\end{remark}
+
+\begin{remark}[The checked instance records the confounder]
+\label{rem:covinstance}
+The instance checked at $G_3$ is
+$[\mathsf{Randomize}(X),\ \mathsf{Measure}(X),\ \mathsf{Measure}(Y),\
+\mathsf{Measure}(Z)]$, whose third column is the confounder $Z$ of
+\S\ref{sec:rct3} itself. Nothing about that choice is favourable: $Z$ is
+not a descendant of $X$, it is a parent of both $X$ and $Y$ before
+surgery, and it is exactly the variable whose presence makes the
+observational contrast of Lemma~\ref{lem:obs3} wrong. Logging it changes
+nothing, because $\mathsf{Randomize}(X)$ cut $X$ loose from it before any
+column was read. The $Y$ column of that four-operation protocol satisfies
+Corollary~\ref{cor:randmanycol}, which is Theorem~\ref{thm:rct3cond}'s
+conclusion recovered from a strictly larger table.
+\end{remark}
+
+\begin{remark}[Why positions rather than a set of nodes]
+\label{rem:positions}
+A set-indexed table, $y \in \prod_{m \in S}\dom_m$ for $S$ a set of
+nodes, would be the tidier type and would make duplicates
+unrepresentable. It was not chosen, for the reason that governs the other
+representation decisions here: a protocol is a \emph{list} of operations,
+so the measured nodes arrive as a list, and turning that list into a set
+is a step the user would have to take --- and justify --- before any
+theorem applied. Positions cost one $\mathsf{tnth}$ in the proofs and
+nothing at the use site.
+\end{remark}
+
 \section{What is not proved}
 \label{sec:limits}
 
@@ -1871,30 +2047,36 @@ Stated plainly, so that the scope of the above is not overread.
   layer, which is what \S\ref{sec:general} runs on. What is still open is
   adequacy for \emph{every} protocol: that the compositional population
   semantics agrees with ``run each unit and push forward'' whatever the
-  operation list, rather than for a single randomization followed by
-  measurements. That remains the result which would transfer the
+  operation list. A single randomization followed by any number of
+  measurements is now covered (Lemma~\ref{lem:logrand}); an operation
+  list that interleaves surgeries with reads is not. That remains the result which would transfer the
   believability of the small operational semantics to the
   reasoning-friendly denotational one.
 
 \item[Identification (Theorem B, distributional).] Proved, for one
-  randomized node and two logged columns: Theorem~\ref{thm:randjoint} and
-  Corollary~\ref{cor:randcond} hold for every well-formed acyclic model,
-  with Theorem~\ref{thm:rct3cond} as the checked instance. Overlap is
-  needed for the conditional and nothing else is assumed of the coin ---
-  in particular uniformity is \emph{not} required, and independence from
-  confounders is not a hypothesis but a consequence of the surgery. What
-  remains open is the rest of the design space: several randomized nodes
-  (factorial designs), more than two logged columns (covariates), and any
-  protocol that selects.
+  randomized node and \emph{any} number of logged columns:
+  Theorem~\ref{thm:randmanyjoint} and Corollary~\ref{cor:randmanycond}
+  hold for every well-formed acyclic model, every measured list, and
+  every exogenous law, with Remark~\ref{rem:covinstance}'s three-column
+  trial at $G_3$ as the checked instance. Overlap is needed for the
+  conditional and nothing else is assumed of the coin --- in particular
+  uniformity is \emph{not} required, and independence from confounders is
+  not a hypothesis but a consequence of the surgery. What remains open is
+  the rest of the design space: several randomized nodes (factorial
+  designs), conditioning \emph{on} a measured column rather than only
+  reading it (effects within a covariate stratum, which follow from
+  Corollary~\ref{cor:randmanycond} but are not derived), and any protocol
+  that selects.
 
 \item[The weak law is per-value, except for the conditional estimator.]
   Theorem~\ref{thm:lln} fixes one $v \in \dom_n$, and so do
   Theorems~\ref{thm:rct2emp}, \ref{thm:rct3emp} and \ref{thm:rct3arm}. A
   statement about the whole distribution needs a union bound, at a cost of
   a factor $|\dom_n|$. That has now been paid for the \emph{conditional}
-  estimator --- Corollary~\ref{cor:empcondfam} and
-  Theorem~\ref{thm:rct3armall} are uniform over the outcome values --- but
-  not for the unconditional ones, which remain per-value.
+  estimator --- Corollary~\ref{cor:empcondfam},
+  Theorem~\ref{thm:rct3armall} and Theorem~\ref{thm:randmanyemp} are
+  uniform over the values, the last over whole tables --- but not for the
+  unconditional ones, which remain per-value.
 
 \item[The variance is left abstract.] $\Var[\Ind{A_v}] = p(1-p) \le 1/4$ is
   not computed, so the bound is stated in terms of a variance rather than
@@ -2356,6 +2538,62 @@ is positive by hypothesis. Theorem~\ref{thm:empcond} gives the
 single-value statement and Corollary~\ref{cor:empcondfam} the uniform one;
 both are already stated for arbitrary events, so nothing further is
 needed.
+\end{proofof}
+
+\begin{proofof}{lem:logrand}{Lemma}{Every measured node logs the randomized solve}
+Two steps, both structural. First, a $\mathsf{Measure}$ leaves
+$\mathsf{cur\_fun}$ alone and only appends to the log, so a whole run of
+measures evaluates every node against the one mechanism family the
+$\mathsf{Randomize}$ installed, and the log it builds is the list of those
+values in program order. Second, the log read is first-match, so a node
+occurring in $\vec n$ is answered by its own entry --- and if it occurs
+more than once, by the first of several entries all carrying the same
+value, since the family did not change between them. Decoding gives
+$\solve^{\mathrm{rand}}_a$.
+\end{proofof}
+
+\begin{proofof}{thm:randmanyjoint}{Theorem}{The whole table factorises, in any model}
+Lemma~\ref{lem:logrand} rewrites the arm column and every cell of the
+table at once. The arm column is $\solve^{\mathrm{rand}}_a(w)(a) = w_a$,
+as in Lemma~\ref{lem:randfst}; cell $i$ is
+$\solvedo_{a := w_a}(w)(m_i)$ by Lemma~\ref{lem:solverand}. So the logged
+pair is
+$\bigl(w_a,\ (\solvedo_{a := w_a}(w)(m_i))_{i<k}\bigr)$.
+Lemma~\ref{lem:solvedooff} holds at each position, so it holds of the
+tuple --- extensionality of the dependent function space is the whole
+step --- which supplies Theorem~\ref{thm:splitoff}'s hypothesis for
+$F_x := (\solvedo_{a := x}(\cdot)(m_i))_{i<k}$. That theorem concludes,
+with $\dom_{\vec m}$ in the role of its arbitrary finite target.
+\end{proofof}
+
+\begin{proofof}{cor:randmanycond}{Corollary}{Identification of the whole table}
+The ratio form of \S\ref{sec:rct3arm} is stated for one node's column, so
+it does not apply directly. Its proof, however, never uses what the two
+columns are: only that each is a function of the unit, and that the joint
+of the pair factorises through a kernel. Restated at that generality ---
+for arbitrary observables $f$ and $g$ of a unit --- it applies with
+$f := \mathsf{log}(\cdot)(a)$ and $g := \mathsf{log\_rec}$. The two
+obligations are then Lemma~\ref{lem:randfst}, which is unchanged by the
+extra columns, and Theorem~\ref{thm:randmanyjoint}.
+\end{proofof}
+
+\begin{proofof}{thm:randmanypair}{Theorem}{Any single column still factorises}
+Theorem~\ref{thm:randjoint}'s proof verbatim, with
+Lemma~\ref{lem:logrand} in place of its two hand-rolled column reads.
+The membership hypothesis is what those reads were implicitly using.
+\end{proofof}
+
+\begin{proofof}{cor:randmanycol}{Corollary}{Adding columns cannot break identification}
+Corollary~\ref{cor:randcond}'s proof, on
+Theorem~\ref{thm:randmanypair} instead of Theorem~\ref{thm:randjoint}.
+\end{proofof}
+
+\begin{proofof}{thm:randmanyemp}{Theorem}{What a many-column trial reports}
+Corollary~\ref{cor:randmanycond} identifies each cell and
+Lemma~\ref{lem:randfst} gives the conditioning event mass $P_a(x)$.
+Apply Corollary~\ref{cor:empcondfam} with the family indexed by
+$\dom_{\vec m}$; it is already stated for an arbitrary finite index and
+arbitrary events, so there is nothing further to prove.
 \end{proofof}
 
 \end{document}
